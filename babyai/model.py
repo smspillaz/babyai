@@ -245,49 +245,11 @@ class StateEncoder(nn.Module):
             ValueError("Undefined instruction architecture: {}".format(self.use_instr))
 
 
-class ACModel(nn.Module, babyai.rl.RecurrentACModel):
-    def __init__(self, obs_space, action_space,
-                 image_dim=128, memory_dim=128, instr_dim=128,
-                 use_instr=False, lang_model="gru", use_memory=False,
-                 arch="bow_endpool_res", aux_info=None):
+class ExtraHeads(nn.Module):
+    def __init__(self, embedding_size, aux_info=None):
         super().__init__()
-
+        self.embedding_size = embedding_size
         self.aux_info = aux_info
-    
-        self.state_encoder = StateEncoder(obs_space,
-                                          action_space,
-                                          image_dim,
-                                          memory_dim,
-                                          instr_dim,
-                                          use_instr,
-                                          lang_model,
-                                          use_memory,
-                                          arch)
-
-        # Define memory and resize image embedding
-        self.embedding_size = image_dim
-
-        # Define actor's model
-        self.actor = nn.Sequential(
-            nn.Linear(self.embedding_size, 64),
-            nn.Tanh(),
-            nn.Linear(64, action_space.n)
-        )
-
-        # Define critic's model
-        self.critic = nn.Sequential(
-            nn.Linear(self.embedding_size, 64),
-            nn.Tanh(),
-            nn.Linear(64, 1)
-        )
-
-        # Initialize parameters correctly
-        self.apply(initialize_parameters)
-
-        # Define head for extra info
-        if self.aux_info:
-            self.extra_heads = None
-            self.add_heads()
 
     def add_heads(self):
         '''
@@ -326,6 +288,61 @@ class ACModel(nn.Module, babyai.rl.RecurrentACModel):
         except Exception:
             raise ValueError('Could not add extra heads')
 
+    def forward(self, embedding):
+        if hasattr(self, 'aux_info') and self.aux_info:
+            extra_predictions = {info: self.extra_heads[info](embedding) for info in self.extra_heads}
+        else:
+            extra_predictions = dict()
+
+        return extra_predictions
+
+
+class ACModel(nn.Module, babyai.rl.RecurrentACModel):
+    def __init__(self, obs_space, action_space,
+                 image_dim=128, memory_dim=128, instr_dim=128,
+                 use_instr=False, lang_model="gru", use_memory=False,
+                 arch="bow_endpool_res", aux_info=None):
+        super().__init__()
+    
+        self.state_encoder = StateEncoder(obs_space,
+                                          action_space,
+                                          image_dim,
+                                          memory_dim,
+                                          instr_dim,
+                                          use_instr,
+                                          lang_model,
+                                          use_memory,
+                                          arch)
+
+        # Define memory and resize image embedding
+        self.embedding_size = image_dim
+
+        # Define actor's model
+        self.actor = nn.Sequential(
+            nn.Linear(self.embedding_size, 64),
+            nn.Tanh(),
+            nn.Linear(64, action_space.n)
+        )
+
+        # Define critic's model
+        self.critic = nn.Sequential(
+            nn.Linear(self.embedding_size, 64),
+            nn.Tanh(),
+            nn.Linear(64, 1)
+        )
+
+        # Initialize parameters correctly
+        self.apply(initialize_parameters)
+
+        # Define head for extra info
+        self.extra_heads = ExtraHeads(self.embedding_size, aux_info)
+
+    def add_heads(self):
+        self.extra_heads.add_heads()
+
+    def add_extra_heads_if_necessary(self, aux_info):
+        self.extra_heads.add_extra_heads_if_necessary(self, aux_info)
+
     @property
     def memory_size(self):
         return self.state_encoder.memory_size
@@ -337,16 +354,13 @@ class ACModel(nn.Module, babyai.rl.RecurrentACModel):
     def forward(self, obs, memory, instr_embedding=None):
         embedding = self.state_encoder(obs, memory, instr_embedding)
 
-        if hasattr(self, 'aux_info') and self.aux_info:
-            extra_predictions = {info: self.extra_heads[info](embedding) for info in self.extra_heads}
-        else:
-            extra_predictions = dict()
-
         x = self.actor(embedding)
         dist = Categorical(logits=F.log_softmax(x, dim=1))
 
         x = self.critic(embedding)
         value = x.squeeze(1)
+
+        extra_predictions = self.extra_heads(embedding)
 
         return {'dist': dist, 'value': value, 'memory': memory, 'extra_predictions': extra_predictions}
 
