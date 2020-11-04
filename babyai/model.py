@@ -59,11 +59,17 @@ class ImageBOWEmbedding(nn.Module):
        return self.embedding(inputs).sum(1).permute(0, 3, 1, 2)
 
 
-class ACModel(nn.Module, babyai.rl.RecurrentACModel):
-    def __init__(self, obs_space, action_space,
-                 image_dim=128, memory_dim=128, instr_dim=128,
-                 use_instr=False, lang_model="gru", use_memory=False,
-                 arch="bow_endpool_res", aux_info=None):
+class StateEncoder(nn.Module):
+    def __init__(self,
+                 obs_space,
+                 action_space,
+                 image_dim=128,
+                 memory_dim=128,
+                 instr_dim=128,
+                 use_instr=False,
+                 lang_model="gru",
+                 use_memory=False,
+                 arch="bow_endpool_res"):
         super().__init__()
 
         endpool = 'endpool' in arch
@@ -76,7 +82,6 @@ class ACModel(nn.Module, babyai.rl.RecurrentACModel):
         self.use_memory = use_memory
         self.arch = arch
         self.lang_model = lang_model
-        self.aux_info = aux_info
         if self.res and image_dim != 128:
             raise ValueError(f"image_dim is {image_dim}, expected 128")
         self.image_dim = image_dim
@@ -141,11 +146,126 @@ class ACModel(nn.Module, babyai.rl.RecurrentACModel):
                 self.controllers.append(mod)
                 self.add_module('FiLM_' + str(ni), mod)
 
-        # Define memory and resize image embedding
-        self.embedding_size = self.image_dim
         if self.use_memory:
             self.memory_rnn = nn.LSTMCell(self.image_dim, self.memory_dim)
             self.embedding_size = self.semi_memory_size
+
+    @property
+    def memory_size(self):
+        return 2 * self.semi_memory_size
+
+    @property
+    def semi_memory_size(self):
+        return self.memory_dim
+
+    def forward(self, obs, memory, instr_embedding):
+        if self.use_instr and instr_embedding is None:
+            instr_embedding = self._get_instr_embedding(obs.instr)
+        if self.use_instr and self.lang_model == "attgru":
+            # outputs: B x L x D
+            # memory: B x M
+            mask = (obs.instr != 0).float()
+            # The mask tensor has the same length as obs.instr, and
+            # thus can be both shorter and longer than instr_embedding.
+            # It can be longer if instr_embedding is computed
+            # for a subbatch of obs.instr.
+            # It can be shorter if obs.instr is a subbatch of
+            # the batch that instr_embeddings was computed for.
+            # Here, we make sure that mask and instr_embeddings
+            # have equal length along dimension 1.
+            mask = mask[:, :instr_embedding.shape[1]]
+            instr_embedding = instr_embedding[:, :mask.shape[1]]
+
+            keys = self.memory2key(memory)
+            pre_softmax = (keys[:, None, :] * instr_embedding).sum(2) + 1000 * mask
+            attention = F.softmax(pre_softmax, dim=1)
+            instr_embedding = (instr_embedding * attention[:, :, None]).sum(1)
+
+        x = torch.transpose(torch.transpose(obs.image, 1, 3), 2, 3)
+
+        if 'pixel' in self.arch:
+            x /= 256.0
+        x = self.image_conv(x)
+        if self.use_instr:
+            for controller in self.controllers:
+                out = controller(x, instr_embedding)
+                if self.res:
+                    out += x
+                x = out
+        x = F.relu(self.film_pool(x))
+        x = x.reshape(x.shape[0], -1)
+
+        if self.use_memory:
+            hidden = (memory[:, :self.semi_memory_size], memory[:, self.semi_memory_size:])
+            hidden = self.memory_rnn(x, hidden)
+            embedding = hidden[0]
+            memory = torch.cat(hidden, dim=1)
+        else:
+            embedding = x
+        
+        return embedding
+
+    def _get_instr_embedding(self, instr):
+        lengths = (instr != 0).sum(1).long()
+        if self.lang_model == 'gru':
+            out, _ = self.instr_rnn(self.word_embedding(instr))
+            hidden = out[range(len(lengths)), lengths-1, :]
+            return hidden
+
+        elif self.lang_model in ['bigru', 'attgru']:
+            masks = (instr != 0).float()
+
+            if lengths.shape[0] > 1:
+                seq_lengths, perm_idx = lengths.sort(0, descending=True)
+                iperm_idx = torch.LongTensor(perm_idx.shape).fill_(0)
+                if instr.is_cuda: iperm_idx = iperm_idx.cuda()
+                for i, v in enumerate(perm_idx):
+                    iperm_idx[v.data] = i
+
+                inputs = self.word_embedding(instr)
+                inputs = inputs[perm_idx]
+
+                inputs = pack_padded_sequence(inputs, seq_lengths.data.cpu().numpy(), batch_first=True)
+
+                outputs, final_states = self.instr_rnn(inputs)
+            else:
+                instr = instr[:, 0:lengths[0]]
+                outputs, final_states = self.instr_rnn(self.word_embedding(instr))
+                iperm_idx = None
+            final_states = final_states.transpose(0, 1).contiguous()
+            final_states = final_states.view(final_states.shape[0], -1)
+            if iperm_idx is not None:
+                outputs, _ = pad_packed_sequence(outputs, batch_first=True)
+                outputs = outputs[iperm_idx]
+                final_states = final_states[iperm_idx]
+
+            return outputs if self.lang_model == 'attgru' else final_states
+
+        else:
+            ValueError("Undefined instruction architecture: {}".format(self.use_instr))
+
+
+class ACModel(nn.Module, babyai.rl.RecurrentACModel):
+    def __init__(self, obs_space, action_space,
+                 image_dim=128, memory_dim=128, instr_dim=128,
+                 use_instr=False, lang_model="gru", use_memory=False,
+                 arch="bow_endpool_res", aux_info=None):
+        super().__init__()
+
+        self.aux_info = aux_info
+    
+        self.state_encoder = StateEncoder(obs_space,
+                                          action_space,
+                                          image_dim,
+                                          memory_dim,
+                                          instr_dim,
+                                          use_instr,
+                                          lang_model,
+                                          use_memory,
+                                          arch)
+
+        # Define memory and resize image embedding
+        self.embedding_size = image_dim
 
         # Define actor's model
         self.actor = nn.Sequential(
@@ -208,56 +328,14 @@ class ACModel(nn.Module, babyai.rl.RecurrentACModel):
 
     @property
     def memory_size(self):
-        return 2 * self.semi_memory_size
+        return self.state_encoder.memory_size
 
     @property
     def semi_memory_size(self):
-        return self.memory_dim
+        return self.state_encoder.semi_memory_size
 
     def forward(self, obs, memory, instr_embedding=None):
-        if self.use_instr and instr_embedding is None:
-            instr_embedding = self._get_instr_embedding(obs.instr)
-        if self.use_instr and self.lang_model == "attgru":
-            # outputs: B x L x D
-            # memory: B x M
-            mask = (obs.instr != 0).float()
-            # The mask tensor has the same length as obs.instr, and
-            # thus can be both shorter and longer than instr_embedding.
-            # It can be longer if instr_embedding is computed
-            # for a subbatch of obs.instr.
-            # It can be shorter if obs.instr is a subbatch of
-            # the batch that instr_embeddings was computed for.
-            # Here, we make sure that mask and instr_embeddings
-            # have equal length along dimension 1.
-            mask = mask[:, :instr_embedding.shape[1]]
-            instr_embedding = instr_embedding[:, :mask.shape[1]]
-
-            keys = self.memory2key(memory)
-            pre_softmax = (keys[:, None, :] * instr_embedding).sum(2) + 1000 * mask
-            attention = F.softmax(pre_softmax, dim=1)
-            instr_embedding = (instr_embedding * attention[:, :, None]).sum(1)
-
-        x = torch.transpose(torch.transpose(obs.image, 1, 3), 2, 3)
-
-        if 'pixel' in self.arch:
-            x /= 256.0
-        x = self.image_conv(x)
-        if self.use_instr:
-            for controller in self.controllers:
-                out = controller(x, instr_embedding)
-                if self.res:
-                    out += x
-                x = out
-        x = F.relu(self.film_pool(x))
-        x = x.reshape(x.shape[0], -1)
-
-        if self.use_memory:
-            hidden = (memory[:, :self.semi_memory_size], memory[:, self.semi_memory_size:])
-            hidden = self.memory_rnn(x, hidden)
-            embedding = hidden[0]
-            memory = torch.cat(hidden, dim=1)
-        else:
-            embedding = x
+        embedding = self.state_encoder(obs, memory, instr_embedding)
 
         if hasattr(self, 'aux_info') and self.aux_info:
             extra_predictions = {info: self.extra_heads[info](embedding) for info in self.extra_heads}
@@ -272,41 +350,3 @@ class ACModel(nn.Module, babyai.rl.RecurrentACModel):
 
         return {'dist': dist, 'value': value, 'memory': memory, 'extra_predictions': extra_predictions}
 
-    def _get_instr_embedding(self, instr):
-        lengths = (instr != 0).sum(1).long()
-        if self.lang_model == 'gru':
-            out, _ = self.instr_rnn(self.word_embedding(instr))
-            hidden = out[range(len(lengths)), lengths-1, :]
-            return hidden
-
-        elif self.lang_model in ['bigru', 'attgru']:
-            masks = (instr != 0).float()
-
-            if lengths.shape[0] > 1:
-                seq_lengths, perm_idx = lengths.sort(0, descending=True)
-                iperm_idx = torch.LongTensor(perm_idx.shape).fill_(0)
-                if instr.is_cuda: iperm_idx = iperm_idx.cuda()
-                for i, v in enumerate(perm_idx):
-                    iperm_idx[v.data] = i
-
-                inputs = self.word_embedding(instr)
-                inputs = inputs[perm_idx]
-
-                inputs = pack_padded_sequence(inputs, seq_lengths.data.cpu().numpy(), batch_first=True)
-
-                outputs, final_states = self.instr_rnn(inputs)
-            else:
-                instr = instr[:, 0:lengths[0]]
-                outputs, final_states = self.instr_rnn(self.word_embedding(instr))
-                iperm_idx = None
-            final_states = final_states.transpose(0, 1).contiguous()
-            final_states = final_states.view(final_states.shape[0], -1)
-            if iperm_idx is not None:
-                outputs, _ = pad_packed_sequence(outputs, batch_first=True)
-                outputs = outputs[iperm_idx]
-                final_states = final_states[iperm_idx]
-
-            return outputs if self.lang_model == 'attgru' else final_states
-
-        else:
-            ValueError("Undefined instruction architecture: {}".format(self.use_instr))
