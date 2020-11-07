@@ -364,3 +364,95 @@ class ACModel(nn.Module, babyai.rl.RecurrentACModel):
 
         return {'dist': dist, 'value': value, 'memory': memory, 'extra_predictions': extra_predictions}
 
+
+class HierarchicalACModel(nn.Module, babyai.rl.RecurrentACModel):
+    def __init__(self, obs_space, action_space,
+                 image_dim=128, memory_dim=128, instr_dim=128,
+                 use_instr=False, lang_model="gru", use_memory=False,
+                 arch="bow_endpool_res", aux_info=None, p_range=(5, 15), latent_size=16):
+        """Implements HiPPO within the ACModel.
+
+        The only crucial difference here is that we have a "manager" policy
+        which re-generates a latent every p timesteps, where p is a uniformly
+        distributed random variable. Then the actor policy is conditioned on
+        that latent.
+        """
+        super().__init__()
+        self.state_encoder = StateEncoder(obs_space,
+                                          action_space,
+                                          image_dim,
+                                          memory_dim,
+                                          instr_dim,
+                                          use_instr,
+                                          lang_model,
+                                          use_memory,
+                                          arch)
+
+        # Define memory and resize image embedding
+        self.embedding_size = image_dim
+        self.latent_size = latent_size
+        self.action_space = action_space
+        self.countdown = 0
+
+        # Define the manager model
+        self.manager = nn.Sequential(
+            nn.Linear(self.embedding_size, 64),
+            nn.Tanh(),
+            nn.Linear(64, self.latent_size)
+        )
+
+        # Define actor's model
+        self.actor = nn.Sequential(
+            nn.Linear(self.embedding_size, 64),
+            nn.Tanh(),
+            nn.Linear(64, action_space.n * self.latent_size)
+        )
+
+        # Define critic's model
+        self.critic = nn.Sequential(
+            nn.Linear(self.embedding_size, 64),
+            nn.Tanh(),
+            nn.Linear(64, 1)
+        )
+
+        # Initialize parameters correctly
+        self.apply(initialize_parameters)
+
+        # Define head for extra info
+        self.extra_heads = ExtraHeads(self.embedding_size, aux_info)
+
+    def add_heads(self):
+        self.extra_heads.add_heads()
+
+    def add_extra_heads_if_necessary(self, aux_info):
+        self.extra_heads.add_extra_heads_if_necessary(self, aux_info)
+
+    @property
+    def memory_size(self):
+        return self.state_encoder.memory_size
+
+    @property
+    def semi_memory_size(self):
+        return self.state_encoder.semi_memory_size
+
+    def forward(self, obs, memory, instr_embedding=None):
+        embedding = self.state_encoder(obs, memory, instr_embedding)
+
+        x = self.actor(embedding)
+        dists = Categorical(logits=F.log_softmax(x.reshape(-1, self.latent_size, self.action_space.n), dim=-1))
+
+        x = self.manager(embedding)
+        manager_dist = Categorical(logits=F.log_softmax(x, dim=-1))
+
+        x = self.critic(embedding)
+        value = x.squeeze(1)
+
+        extra_predictions = self.extra_heads(embedding)
+
+        return {
+            'dists': dists,
+            'manager_dist': manager_dist,
+            'value': value,
+            'memory': memory,
+            'extra_predictions': extra_predictions
+        }

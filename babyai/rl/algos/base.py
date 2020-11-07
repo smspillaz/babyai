@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 import torch
+from torch.distributions.categorical import Categorical
 import numpy
 
 from babyai.rl.format import default_preprocess_obss
@@ -7,11 +8,30 @@ from babyai.rl.utils import DictList, ParallelEnv
 from babyai.rl.utils.supervised_losses import ExtraInfoCollector
 
 
+def generate_timepoints_array(num_frames_per_proc,
+                              timepoint_lowerbound,
+                              timepoint_upperbound):
+    array = torch.zeros(num_frames_per_proc)
+
+    i = 0
+    count = 0
+    while i < num_frames_per_proc:
+        if count == 0:
+            count += numpy.random.choice(numpy.arange(timepoint_lowerbound,
+                                                      timepoint_upperbound))
+            array[i] = 1.0
+
+        count -= 1
+        i += 1
+
+    return array
+
+
 class BaseAlgo(ABC):
     """The base class for RL algorithms."""
 
     def __init__(self, envs, acmodel, num_frames_per_proc, discount, lr, gae_lambda, entropy_coef,
-                 value_loss_coef, max_grad_norm, recurrence, preprocess_obss, reshape_reward, aux_info):
+                 value_loss_coef, max_grad_norm, recurrence, preprocess_obss, reshape_reward, aux_info, timepoint_bounds=(5, 15)):
         """
         Initializes a `BaseAlgo` instance.
 
@@ -65,13 +85,13 @@ class BaseAlgo(ABC):
         self.preprocess_obss = preprocess_obss or default_preprocess_obss
         self.reshape_reward = reshape_reward
         self.aux_info = aux_info
+        self.timepoint_bounds = timepoint_bounds
 
         # Store helpers values
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.num_procs = len(envs)
         self.num_frames = self.num_frames_per_proc * self.num_procs
-
 
         assert self.num_frames_per_proc % self.recurrence == 0
 
@@ -88,10 +108,12 @@ class BaseAlgo(ABC):
         self.mask = torch.ones(shape[1], device=self.device)
         self.masks = torch.zeros(*shape, device=self.device)
         self.actions = torch.zeros(*shape, device=self.device, dtype=torch.int)
+        self.manager_actions = torch.zeros(*shape, device=self.device, dtype=torch.int)
         self.values = torch.zeros(*shape, device=self.device)
         self.rewards = torch.zeros(*shape, device=self.device)
         self.advantages = torch.zeros(*shape, device=self.device)
         self.log_probs = torch.zeros(*shape, device=self.device)
+        self.manager_log_probs = torch.zeros(*shape, device=self.device)
 
         if self.aux_info:
             self.aux_info_collector = ExtraInfoCollector(self.aux_info, shape, self.device)
@@ -128,18 +150,38 @@ class BaseAlgo(ABC):
             reward, policy loss, value loss, etc.
 
         """
+        # Generate some timepoints where we would update the
+        # manager latents
+        timepoints = generate_timepoints_array(self.num_frames_per_proc, *self.timepoint_bounds)
+        curr_manager_action = None
+
         for i in range(self.num_frames_per_proc):
             # Do one agent-environment interaction
 
             preprocessed_obs = self.preprocess_obss(self.obs, device=self.device)
+
             with torch.no_grad():
                 model_results = self.acmodel(preprocessed_obs, self.memory * self.mask.unsqueeze(1))
-                dist = model_results['dist']
+                dists = model_results['dists']
+                manager_dist = model_results['manager_dist']
                 value = model_results['value']
                 memory = model_results['memory']
                 extra_predictions = model_results['extra_predictions']
 
-            action = dist.sample()
+            if curr_manager_action is None or timepoints[i] == 1.0:
+                curr_manager_action = manager_dist.sample().to(torch.long)
+
+            # Based on the current manager action, marginalize to pick
+            # the action from the low level policy, then we have a batch
+            # of low-level pollicy actions
+            #
+            # Also, detach. This means that we don't backprop through the
+            # manager, but instead we will compute the advantage for that later on.
+            manager_conditioned_action_dists = Categorical(
+                logits=torch.stack([dists.logits[i, a] for i, a in enumerate(curr_manager_action)])
+            )
+
+            action = manager_conditioned_action_dists.sample()
 
             obs, reward, done, env_info = self.env.step(action.cpu().numpy())
             if self.aux_info:
@@ -157,6 +199,7 @@ class BaseAlgo(ABC):
             self.masks[i] = self.mask
             self.mask = 1 - torch.tensor(done, device=self.device, dtype=torch.float)
             self.actions[i] = action
+            self.manager_actions[i] = curr_manager_action
             self.values[i] = value
             if self.reshape_reward is not None:
                 self.rewards[i] = torch.tensor([
@@ -165,7 +208,9 @@ class BaseAlgo(ABC):
                 ], device=self.device)
             else:
                 self.rewards[i] = torch.tensor(reward, device=self.device)
-            self.log_probs[i] = dist.log_prob(action)
+
+            self.log_probs[i] = manager_conditioned_action_dists.log_prob(action)
+            self.manager_log_probs[i] = manager_dist.log_prob(curr_manager_action)
 
             if self.aux_info:
                 self.aux_info_collector.fill_dictionaries(i, env_info, extra_predictions)
@@ -218,11 +263,14 @@ class BaseAlgo(ABC):
 
         # for all tensors below, T x P -> P x T -> P * T
         exps.action = self.actions.transpose(0, 1).reshape(-1)
+        exps.manager_action = self.manager_actions.transpose(0, 1).reshape(-1)
         exps.value = self.values.transpose(0, 1).reshape(-1)
         exps.reward = self.rewards.transpose(0, 1).reshape(-1)
         exps.advantage = self.advantages.transpose(0, 1).reshape(-1)
         exps.returnn = exps.value + exps.advantage
         exps.log_prob = self.log_probs.transpose(0, 1).reshape(-1)
+        exps.manager_log_prob = self.manager_log_probs.transpose(0, 1).reshape(-1)
+        exps.timeline = timepoints.repeat(self.actions.shape[1])
 
         if self.aux_info:
             exps = self.aux_info_collector.end_collection(exps)

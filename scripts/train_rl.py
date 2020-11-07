@@ -19,7 +19,7 @@ import babyai
 import babyai.utils as utils
 import babyai.rl
 from babyai.arguments import ArgumentParser
-from babyai.model import ACModel
+from babyai.model import ACModel, HierarchicalACModel
 from babyai.evaluate import batch_evaluate
 from babyai.utils.agent import ModelAgent
 from gym_minigrid.wrappers import RGBImgPartialObsWrapper
@@ -93,9 +93,9 @@ if acmodel is None:
     if args.pretrained_model:
         acmodel = utils.load_model(args.pretrained_model, raise_not_found=True)
     else:
-        acmodel = ACModel(obss_preprocessor.obs_space, envs[0].action_space,
+        acmodel = HierarchicalACModel(obss_preprocessor.obs_space, envs[0].action_space,
                           args.image_dim, args.memory_dim, args.instr_dim,
-                          not args.no_instr, args.instr_arch, not args.no_mem, args.arch)
+                          not args.no_instr, args.instr_arch, not args.no_mem, args.arch, latent_size=8)
 
 obss_preprocessor.vocab.save()
 utils.save_model(acmodel, args.model)
@@ -111,7 +111,7 @@ if args.algo == "ppo":
                              args.gae_lambda,
                              args.entropy_coef, args.value_loss_coef, args.max_grad_norm, args.recurrence,
                              args.optim_eps, args.clip_eps, args.ppo_epochs, args.batch_size, obss_preprocessor,
-                             reshape_reward)
+                             reshape_reward, timepoint_bounds=(5, 15))
 else:
     raise ValueError("Incorrect algorithm name: {}".format(args.algo))
 
@@ -231,7 +231,7 @@ while status['num_frames'] < args.frames:
             utils.save_model(acmodel, args.model)
 
         # Testing the model before saving
-        agent = ModelAgent(args.model, obss_preprocessor, argmax=True)
+        agent = ModelAgent(args.model, obss_preprocessor, argmax=True, timepoint_bounds=(5, 15))
         agent.model = acmodel
         agent.model.eval()
         logs = batch_evaluate(agent, test_env_name, args.val_seed, args.val_episodes, pixel=use_pixel)

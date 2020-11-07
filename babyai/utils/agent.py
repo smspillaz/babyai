@@ -1,5 +1,7 @@
 from abc import ABC, abstractmethod
 import torch
+from torch.distributions.categorical import Categorical
+import numpy
 from .. import utils
 from babyai.bot import Bot
 from babyai.model import ACModel
@@ -33,7 +35,7 @@ class Agent(ABC):
 class ModelAgent(Agent):
     """A model-based agent. This agent behaves using a model."""
 
-    def __init__(self, model_or_name, obss_preprocessor, argmax):
+    def __init__(self, model_or_name, obss_preprocessor, argmax, timepoint_bounds=(5, 15)):
         if obss_preprocessor is None:
             assert isinstance(model_or_name, str)
             obss_preprocessor = utils.ObssPreprocessor(model_or_name)
@@ -47,6 +49,9 @@ class ModelAgent(Agent):
         self.device = next(self.model.parameters()).device
         self.argmax = argmax
         self.memory = None
+        self.countdown = 0
+        self.manager_action = None
+        self.timepoint_bounds = timepoint_bounds
 
     def act_batch(self, many_obs):
         if self.memory is None:
@@ -58,17 +63,30 @@ class ModelAgent(Agent):
 
         with torch.no_grad():
             model_results = self.model(preprocessed_obs, self.memory)
-            dist = model_results['dist']
+            dists = model_results['dists']
+            manager_dist = model_results['manager_dist']
             value = model_results['value']
             self.memory = model_results['memory']
 
-        if self.argmax:
-            action = dist.probs.argmax(1)
+        if self.countdown == 0:
+            self.countdown = numpy.random.choice(numpy.arange(*self.timepoint_bounds))
+            self.manager_action = manager_dist.probs.argmax(1) if self.argmax else manager_dist.sample()
         else:
-            action = dist.sample()
+            self.countdown -= 1
+
+        manager_conditioned_action_dists = Categorical(
+            logits=torch.stack([dists.logits[i, a] for i, a in enumerate(self.manager_action)])
+        )
+
+        if self.argmax:
+            action = manager_conditioned_action_dists.probs.argmax(1)
+        else:
+            action = manager_conditioned_action_dists.sample()
 
         return {'action': action,
-                'dist': dist,
+                'manager_action': self.manager_action,
+                'dists': dists,
+                'manager_dist': manager_dist,
                 'value': value}
 
     def act(self, obs):
