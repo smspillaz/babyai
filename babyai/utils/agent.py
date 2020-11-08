@@ -62,30 +62,37 @@ class ModelAgent(Agent):
         preprocessed_obs = self.obss_preprocessor(many_obs, device=self.device)
 
         with torch.no_grad():
-            model_results = self.model(preprocessed_obs, self.memory)
-            dists = model_results['dists']
+            model_results = self.model(
+                preprocessed_obs,
+                self.memory,
+                manager_latent=(
+                    None if self.manager_action is None
+                    else torch.nn.functional.one_hot(
+                        self.manager_action.to(torch.long),
+                        self.model.latent_size
+                    )
+                )
+            )
+            dist = model_results['dist']
             manager_dist = model_results['manager_dist']
             value = model_results['value']
             self.memory = model_results['memory']
 
         if self.countdown == 0:
             self.countdown = numpy.random.choice(numpy.arange(*self.timepoint_bounds))
+            print(manager_dist.probs.argmax(1))
             self.manager_action = manager_dist.probs.argmax(1) if self.argmax else manager_dist.sample()
         else:
             self.countdown -= 1
 
-        manager_conditioned_action_dists = Categorical(
-            logits=torch.stack([dists.logits[i, a] for i, a in enumerate(self.manager_action)])
-        )
-
         if self.argmax:
-            action = manager_conditioned_action_dists.probs.argmax(1)
+            action = dist.probs.argmax(1)
         else:
-            action = manager_conditioned_action_dists.sample()
+            action = dist.sample()
 
         return {'action': action,
                 'manager_action': self.manager_action,
-                'dists': dists,
+                'dist': dist,
                 'manager_dist': manager_dist,
                 'value': value}
 

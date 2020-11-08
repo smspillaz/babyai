@@ -403,9 +403,9 @@ class HierarchicalACModel(nn.Module, babyai.rl.RecurrentACModel):
 
         # Define actor's model
         self.actor = nn.Sequential(
-            nn.Linear(self.embedding_size, 64),
+            nn.Linear(self.embedding_size + self.latent_size, 64),
             nn.Tanh(),
-            nn.Linear(64, action_space.n * self.latent_size)
+            nn.Linear(64, action_space.n)
         )
 
         # Define critic's model
@@ -435,11 +435,17 @@ class HierarchicalACModel(nn.Module, babyai.rl.RecurrentACModel):
     def semi_memory_size(self):
         return self.state_encoder.semi_memory_size
 
-    def forward(self, obs, memory, instr_embedding=None):
+    def forward(self, obs, memory, instr_embedding=None, manager_latent=None):
+        manager_latent = (
+            torch.zeros(
+                memory.shape[0], self.latent_size, device=memory.device
+            )
+            if manager_latent is None else manager_latent
+        )
         embedding = self.state_encoder(obs, memory, instr_embedding)
 
-        x = self.actor(embedding)
-        dists = Categorical(logits=F.log_softmax(x.reshape(-1, self.latent_size, self.action_space.n), dim=-1))
+        x = self.actor(torch.cat([embedding, manager_latent], dim=-1))
+        dist = Categorical(logits=F.log_softmax(x, dim=-1))
 
         x = self.manager(embedding)
         manager_dist = Categorical(logits=F.log_softmax(x, dim=-1))
@@ -450,7 +456,7 @@ class HierarchicalACModel(nn.Module, babyai.rl.RecurrentACModel):
         extra_predictions = self.extra_heads(embedding)
 
         return {
-            'dists': dists,
+            'dist': dist,
             'manager_dist': manager_dist,
             'value': value,
             'memory': memory,

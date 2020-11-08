@@ -161,8 +161,16 @@ class BaseAlgo(ABC):
             preprocessed_obs = self.preprocess_obss(self.obs, device=self.device)
 
             with torch.no_grad():
-                model_results = self.acmodel(preprocessed_obs, self.memory * self.mask.unsqueeze(1))
-                dists = model_results['dists']
+                # Condition on the manager latent, it is a one_hot
+                model_results = self.acmodel(
+                    preprocessed_obs,
+                    self.memory * self.mask.unsqueeze(1),
+                    manager_latent=None if curr_manager_action is None else torch.nn.functional.one_hot(
+                        curr_manager_action.to(torch.long),
+                        self.acmodel.latent_size
+                    )
+                )
+                dist = model_results['dist']
                 manager_dist = model_results['manager_dist']
                 value = model_results['value']
                 memory = model_results['memory']
@@ -171,17 +179,7 @@ class BaseAlgo(ABC):
             if curr_manager_action is None or timepoints[i] == 1.0:
                 curr_manager_action = manager_dist.sample().to(torch.long)
 
-            # Based on the current manager action, marginalize to pick
-            # the action from the low level policy, then we have a batch
-            # of low-level pollicy actions
-            #
-            # Also, detach. This means that we don't backprop through the
-            # manager, but instead we will compute the advantage for that later on.
-            manager_conditioned_action_dists = Categorical(
-                logits=torch.stack([dists.logits[i, a] for i, a in enumerate(curr_manager_action)])
-            )
-
-            action = manager_conditioned_action_dists.sample()
+            action = dist.sample()
 
             obs, reward, done, env_info = self.env.step(action.cpu().numpy())
             if self.aux_info:
@@ -209,7 +207,7 @@ class BaseAlgo(ABC):
             else:
                 self.rewards[i] = torch.tensor(reward, device=self.device)
 
-            self.log_probs[i] = manager_conditioned_action_dists.log_prob(action)
+            self.log_probs[i] = dist.log_prob(action)
             self.manager_log_probs[i] = manager_dist.log_prob(curr_manager_action)
 
             if self.aux_info:
@@ -270,7 +268,7 @@ class BaseAlgo(ABC):
         exps.returnn = exps.value + exps.advantage
         exps.log_prob = self.log_probs.transpose(0, 1).reshape(-1)
         exps.manager_log_prob = self.manager_log_probs.transpose(0, 1).reshape(-1)
-        exps.timeline = timepoints.repeat(self.actions.shape[1])
+        exps.timeline = timepoints.repeat(self.actions.shape[1]).to(exps.action.device)
 
         if self.aux_info:
             exps = self.aux_info_collector.end_collection(exps)

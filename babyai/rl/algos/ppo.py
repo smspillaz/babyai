@@ -90,30 +90,33 @@ class PPOAlgo(BaseAlgo):
 
                     # Compute loss
 
-                    model_results = self.acmodel(sb.obs, memory * sb.mask)
-                    dists = model_results['dists']
+                    model_results = self.acmodel(
+                        sb.obs,
+                        memory * sb.mask,
+                        manager_latent=torch.nn.functional.one_hot(
+                            sb.manager_action.to(torch.long),
+                            self.acmodel.latent_size
+                        )
+                    )
+                    dist = model_results['dist']
                     manager_dist = model_results['manager_dist']
                     value = model_results['value']
                     memory = model_results['memory']
                     extra_predictions = model_results['extra_predictions']
 
                     manager_ratio = torch.exp(manager_dist.log_prob(sb.manager_action) - sb.manager_log_prob)
-                    manager_surr1 = manager_ratio * sb.advantage
+                    manager_surr1 = manager_ratio * sb.advantage * sb.timeline
                     manager_surr2 = torch.clamp(manager_ratio, 1.0 - self.clip_eps, 1.0 + self.clip_eps) * sb.advantage
                     manager_policy_loss = -torch.min(manager_surr1, manager_surr2).mean()
 
                     manager_entropy = manager_dist.entropy().mean()
 
-                    manager_conditioned_action_dists = Categorical(
-                        logits=torch.stack([dists.logits[i, a] for i, a in enumerate(sb.manager_action)])
-                    )
-
-                    ratio = torch.exp(manager_conditioned_action_dists.log_prob(sb.action) - sb.log_prob)
+                    ratio = torch.exp(dist.log_prob(sb.action) - sb.log_prob)
                     surr1 = ratio * sb.advantage
                     surr2 = torch.clamp(ratio, 1.0 - self.clip_eps, 1.0 + self.clip_eps) * sb.advantage
                     policy_loss = -torch.min(surr1, surr2).mean()
 
-                    entropy = dists.entropy().mean()
+                    entropy = dist.entropy().mean()
 
                     value_clipped = sb.value + torch.clamp(value - sb.value, -self.clip_eps, self.clip_eps)
                     surr1 = (value - sb.returnn).pow(2)
