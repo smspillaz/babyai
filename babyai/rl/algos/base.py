@@ -129,7 +129,7 @@ class BaseAlgo(ABC):
         self.log_reshaped_return = [0] * self.num_procs
         self.log_num_frames = [0] * self.num_procs
 
-    def collect_experiences(self):
+    def collect_experiences(self, num_frames=None):
         """Collects rollouts and computes advantages.
 
         Runs several environments concurrently. The next actions are computed
@@ -177,7 +177,10 @@ class BaseAlgo(ABC):
                 extra_predictions = model_results['extra_predictions']
 
             if curr_manager_action is None or timepoints[i] == 1.0:
-                curr_manager_action = manager_dist.sample().to(torch.long)
+                tau = (0.0 if num_frames is None else (
+                    1.0 - num_frames / 10000000
+                ))
+                curr_manager_action = torch.nn.functional.gumbel_softmax(manager_dist.logits, tau, dim=-1).argmax(dim=-1)
 
             action = dist.sample()
 

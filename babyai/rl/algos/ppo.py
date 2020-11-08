@@ -31,10 +31,10 @@ class PPOAlgo(BaseAlgo):
         self.optimizer = torch.optim.Adam(self.acmodel.parameters(), lr, (beta1, beta2), eps=adam_eps)
         self.batch_num = 0
 
-    def update_parameters(self):
+    def update_parameters(self, num_frames=None):
         # Collect experiences
 
-        exps, logs = self.collect_experiences()
+        exps, logs = self.collect_experiences(num_frames=num_frames)
         '''
         exps is a DictList with the following keys ['obs', 'memory', 'mask', 'action', 'value', 'reward',
          'advantage', 'returnn', 'log_prob'] and ['collected_info', 'extra_predictions'] if we use aux_info

@@ -184,7 +184,7 @@ while status['num_frames'] < args.frames:
     # Update parameters
 
     update_start_time = time.time()
-    logs = algo.update_parameters()
+    logs = algo.update_parameters(num_frames=status['num_frames'])
     update_end_time = time.time()
 
     status['num_frames'] += logs["num_frames"]
