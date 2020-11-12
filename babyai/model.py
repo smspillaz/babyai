@@ -180,6 +180,50 @@ class LanguageEncoder(nn.Module):
             ValueError("Undefined instruction architecture: {}".format(self.use_instr))
 
 
+class FiLMImageAttention(nn.Module):
+    def __init__(self,
+                 image_dim,
+                 instr_dim,
+                 arch="bow_endpool_res"):
+        super().__init__()
+        self.arch = arch
+
+        endpool = 'endpool' in arch
+        use_bow = 'bow' in arch
+        pixel = 'pixel' in arch
+        self.res = 'res' in arch
+
+        for part in self.arch.split('_'):
+            if part not in ['original', 'bow', 'pixels', 'endpool', 'res']:
+                raise ValueError("Incorrect architecture name: {}".format(self.arch))
+
+        num_module = 2
+        self.controllers = []
+        for ni in range(num_module):
+            mod = FiLM(
+                in_features=instr_dim,
+                out_features=128 if ni < num_module-1 else image_dim,
+                in_channels=128, imm_channels=128)
+            self.controllers.append(mod)
+            self.add_module('FiLM_' + str(ni), mod)
+
+        self.film_pool = nn.MaxPool2d(kernel_size=(7, 7) if endpool else (2, 2), stride=2)
+
+    def forward(self, img_embedding, instr_embedding):
+        x = img_embedding
+
+        if instr_embedding is not None:
+            for controller in self.controllers:
+                out = controller(x, instr_embedding)
+                if self.res:
+                    out += x
+                x = out
+        x = F.relu(self.film_pool(x))
+        x = x.reshape(x.shape[0], -1)
+
+        return x
+
+
 class StateEncoder(nn.Module):
     def __init__(self,
                  obs_space,
@@ -237,15 +281,11 @@ class StateEncoder(nn.Module):
             if self.lang_model == 'attgru':
                 self.memory2key = nn.Linear(self.memory_size, self.language_encoder.final_instr_dim)
 
-            num_module = 2
-            self.controllers = []
-            for ni in range(num_module):
-                mod = FiLM(
-                    in_features=self.language_encoder.final_instr_dim,
-                    out_features=128 if ni < num_module-1 else self.image_dim,
-                    in_channels=128, imm_channels=128)
-                self.controllers.append(mod)
-                self.add_module('FiLM_' + str(ni), mod)
+        self.film_image_attention = FiLMImageAttention(
+            self.image_dim,
+            self.language_encoder.final_instr_dim,
+            arch=arch
+        )
 
         if self.use_memory:
             self.memory_rnn = nn.LSTMCell(self.image_dim, self.memory_dim)
@@ -284,15 +324,7 @@ class StateEncoder(nn.Module):
             instr_embedding = (instr_embedding * attention[:, :, None]).sum(1)
 
         x = self.image_encoder(obs.image)
-
-        if self.use_instr:
-            for controller in self.controllers:
-                out = controller(x, instr_embedding)
-                if self.res:
-                    out += x
-                x = out
-        x = F.relu(self.film_pool(x))
-        x = x.reshape(x.shape[0], -1)
+        x = self.film_image_attention(x, instr_embedding if self.use_instr else None)
 
         if self.use_memory:
             hidden = (memory[:, :self.semi_memory_size], memory[:, self.semi_memory_size:])
