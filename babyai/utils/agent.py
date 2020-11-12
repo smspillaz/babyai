@@ -70,7 +70,7 @@ class ModelAgent(Agent):
                     else torch.nn.functional.one_hot(
                         self.manager_action.to(torch.long),
                         self.model.latent_size
-                    )
+                    ).to(torch.float)
                 )
             )
             dist = model_results['dist']

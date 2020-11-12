@@ -168,7 +168,7 @@ class BaseAlgo(ABC):
                     manager_latent=None if curr_manager_action is None else torch.nn.functional.one_hot(
                         curr_manager_action.to(torch.long),
                         self.acmodel.latent_size
-                    )
+                    ).to(torch.float)
                 )
                 dist = model_results['dist']
                 manager_dist = model_results['manager_dist']

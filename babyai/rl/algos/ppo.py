@@ -96,7 +96,7 @@ class PPOAlgo(BaseAlgo):
                         manager_latent=torch.nn.functional.one_hot(
                             sb.manager_action.to(torch.long),
                             self.acmodel.latent_size
-                        )
+                        ).to(torch.float)
                     )
                     dist = model_results['dist']
                     manager_dist = model_results['manager_dist']
