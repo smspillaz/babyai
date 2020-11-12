@@ -107,6 +107,79 @@ class ImageEncoder(nn.Module):
         return x
 
 
+class LanguageEncoder(nn.Module):
+    def __init__(self,
+                 obs_space,
+                 instr_dim,
+                 lang_model="gru",
+                 arch="bow_endpool_res"):
+        super().__init__()
+        self.instr_dim = instr_dim
+        self.arch = arch
+        self.lang_model = lang_model
+        self.obs_space = obs_space
+
+        for part in self.arch.split('_'):
+            if part not in ['original', 'bow', 'pixels', 'endpool', 'res']:
+                raise ValueError("Incorrect architecture name: {}".format(self.arch))
+
+        if self.lang_model in ['gru', 'bigru', 'attgru']:
+            self.word_embedding = nn.Embedding(obs_space["instr"], self.instr_dim)
+            if self.lang_model in ['gru', 'bigru', 'attgru']:
+                gru_dim = self.instr_dim
+                if self.lang_model in ['bigru', 'attgru']:
+                    gru_dim //= 2
+                self.instr_rnn = nn.GRU(
+                    self.instr_dim, gru_dim, batch_first=True,
+                    bidirectional=(self.lang_model in ['bigru', 'attgru']))
+                self.final_instr_dim = self.instr_dim
+            else:
+                kernel_dim = 64
+                kernel_sizes = [3, 4]
+                self.instr_convs = nn.ModuleList([
+                    nn.Conv2d(1, kernel_dim, (K, self.instr_dim)) for K in kernel_sizes])
+                self.final_instr_dim = kernel_dim * len(kernel_sizes)
+
+    def forward(self, instr):
+        lengths = (instr != 0).sum(1).long()
+        if self.lang_model == 'gru':
+            out, _ = self.instr_rnn(self.word_embedding(instr))
+            hidden = out[range(len(lengths)), lengths-1, :]
+            return hidden
+
+        elif self.lang_model in ['bigru', 'attgru']:
+            masks = (instr != 0).float()
+
+            if lengths.shape[0] > 1:
+                seq_lengths, perm_idx = lengths.sort(0, descending=True)
+                iperm_idx = torch.LongTensor(perm_idx.shape).fill_(0)
+                if instr.is_cuda: iperm_idx = iperm_idx.cuda()
+                for i, v in enumerate(perm_idx):
+                    iperm_idx[v.data] = i
+
+                inputs = self.word_embedding(instr)
+                inputs = inputs[perm_idx]
+
+                inputs = pack_padded_sequence(inputs, seq_lengths.data.cpu().numpy(), batch_first=True)
+
+                outputs, final_states = self.instr_rnn(inputs)
+            else:
+                instr = instr[:, 0:lengths[0]]
+                outputs, final_states = self.instr_rnn(self.word_embedding(instr))
+                iperm_idx = None
+            final_states = final_states.transpose(0, 1).contiguous()
+            final_states = final_states.view(final_states.shape[0], -1)
+            if iperm_idx is not None:
+                outputs, _ = pad_packed_sequence(outputs, batch_first=True)
+                outputs = outputs[iperm_idx]
+                final_states = final_states[iperm_idx]
+
+            return outputs if self.lang_model == 'attgru' else final_states
+
+        else:
+            ValueError("Undefined instruction architecture: {}".format(self.use_instr))
+
+
 class StateEncoder(nn.Module):
     def __init__(self,
                  obs_space,
@@ -154,31 +227,21 @@ class StateEncoder(nn.Module):
 
         # Define instruction embedding
         if self.use_instr:
-            if self.lang_model in ['gru', 'bigru', 'attgru']:
-                self.word_embedding = nn.Embedding(obs_space["instr"], self.instr_dim)
-                if self.lang_model in ['gru', 'bigru', 'attgru']:
-                    gru_dim = self.instr_dim
-                    if self.lang_model in ['bigru', 'attgru']:
-                        gru_dim //= 2
-                    self.instr_rnn = nn.GRU(
-                        self.instr_dim, gru_dim, batch_first=True,
-                        bidirectional=(self.lang_model in ['bigru', 'attgru']))
-                    self.final_instr_dim = self.instr_dim
-                else:
-                    kernel_dim = 64
-                    kernel_sizes = [3, 4]
-                    self.instr_convs = nn.ModuleList([
-                        nn.Conv2d(1, kernel_dim, (K, self.instr_dim)) for K in kernel_sizes])
-                    self.final_instr_dim = kernel_dim * len(kernel_sizes)
+            self.language_encoder = LanguageEncoder(
+                obs_space,
+                instr_dim,
+                lang_model=lang_model,
+                arch=arch
+            )
 
             if self.lang_model == 'attgru':
-                self.memory2key = nn.Linear(self.memory_size, self.final_instr_dim)
+                self.memory2key = nn.Linear(self.memory_size, self.language_encoder.final_instr_dim)
 
             num_module = 2
             self.controllers = []
             for ni in range(num_module):
                 mod = FiLM(
-                    in_features=self.final_instr_dim,
+                    in_features=self.language_encoder.final_instr_dim,
                     out_features=128 if ni < num_module-1 else self.image_dim,
                     in_channels=128, imm_channels=128)
                 self.controllers.append(mod)
@@ -198,7 +261,8 @@ class StateEncoder(nn.Module):
 
     def forward(self, obs, memory, instr_embedding):
         if self.use_instr and instr_embedding is None:
-            instr_embedding = self._get_instr_embedding(obs.instr)
+            instr_embedding = self.language_encoder(obs.instr)
+
         if self.use_instr and self.lang_model == "attgru":
             # outputs: B x L x D
             # memory: B x M
@@ -239,45 +303,6 @@ class StateEncoder(nn.Module):
             embedding = x
         
         return embedding
-
-    def _get_instr_embedding(self, instr):
-        lengths = (instr != 0).sum(1).long()
-        if self.lang_model == 'gru':
-            out, _ = self.instr_rnn(self.word_embedding(instr))
-            hidden = out[range(len(lengths)), lengths-1, :]
-            return hidden
-
-        elif self.lang_model in ['bigru', 'attgru']:
-            masks = (instr != 0).float()
-
-            if lengths.shape[0] > 1:
-                seq_lengths, perm_idx = lengths.sort(0, descending=True)
-                iperm_idx = torch.LongTensor(perm_idx.shape).fill_(0)
-                if instr.is_cuda: iperm_idx = iperm_idx.cuda()
-                for i, v in enumerate(perm_idx):
-                    iperm_idx[v.data] = i
-
-                inputs = self.word_embedding(instr)
-                inputs = inputs[perm_idx]
-
-                inputs = pack_padded_sequence(inputs, seq_lengths.data.cpu().numpy(), batch_first=True)
-
-                outputs, final_states = self.instr_rnn(inputs)
-            else:
-                instr = instr[:, 0:lengths[0]]
-                outputs, final_states = self.instr_rnn(self.word_embedding(instr))
-                iperm_idx = None
-            final_states = final_states.transpose(0, 1).contiguous()
-            final_states = final_states.view(final_states.shape[0], -1)
-            if iperm_idx is not None:
-                outputs, _ = pad_packed_sequence(outputs, batch_first=True)
-                outputs = outputs[iperm_idx]
-                final_states = final_states[iperm_idx]
-
-            return outputs if self.lang_model == 'attgru' else final_states
-
-        else:
-            ValueError("Undefined instruction architecture: {}".format(self.use_instr))
 
 
 class ExtraHeads(nn.Module):
