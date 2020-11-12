@@ -346,6 +346,8 @@ class StateEncoder(nn.Module):
         if self.use_memory:
             self.memory_rnn = nn.LSTMCell(self.image_dim, self.memory_dim)
             self.embedding_size = self.semi_memory_size
+        else:
+            self.embedding_size = self.image_dim
 
     @property
     def memory_size(self):
