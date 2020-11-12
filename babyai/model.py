@@ -276,6 +276,33 @@ class MemoryLanguageAttention(nn.Module):
         return instr_embedding
 
 
+class Memory(nn.Module):
+    def __init__(self,
+                 image_dim,
+                 memory_dim=128):
+        super().__init__()
+        self.image_dim = image_dim
+        self.memory_dim = memory_dim
+
+        self.memory_rnn = nn.LSTMCell(self.image_dim, self.memory_dim)
+
+    def forward(self, x, memory):
+        hidden = (memory[:, :self.semi_memory_size], memory[:, self.semi_memory_size:])
+        hidden = self.memory_rnn(x, hidden)
+        embedding = hidden[0]
+        memory = torch.cat(hidden, dim=1)
+
+        return embedding, memory
+
+    @property
+    def memory_size(self):
+        return 2 * self.semi_memory_size
+
+    @property
+    def semi_memory_size(self):
+        return self.memory_dim
+
+
 class StateEncoder(nn.Module):
     def __init__(self,
                  obs_space,
@@ -344,18 +371,21 @@ class StateEncoder(nn.Module):
         )
 
         if self.use_memory:
-            self.memory_rnn = nn.LSTMCell(self.image_dim, self.memory_dim)
-            self.embedding_size = self.semi_memory_size
+            self.memory = Memory(
+                image_dim,
+                memory_dim=memory_dim
+            )
+            self.embedding_size = self.memory.semi_memory_size
         else:
-            self.embedding_size = self.image_dim
+            self.embedding_size = image_dim
 
     @property
     def memory_size(self):
-        return self.memory_language_attention.memory_size
+        return self.memory.memory_size
 
     @property
     def semi_memory_size(self):
-        return self.memory_language_attention.semi_memory_size
+        return self.memory.semi_memory_size
 
     def forward(self, obs, memory, instr_embedding):
         if self.use_instr and instr_embedding is None:
@@ -372,10 +402,7 @@ class StateEncoder(nn.Module):
         x = self.film_image_attention(x, instr_embedding if self.use_instr else None)
 
         if self.use_memory:
-            hidden = (memory[:, :self.semi_memory_size], memory[:, self.semi_memory_size:])
-            hidden = self.memory_rnn(x, hidden)
-            embedding = hidden[0]
-            memory = torch.cat(hidden, dim=1)
+            embedding, memory = self.memory(x, memory)
         else:
             embedding = x
         
