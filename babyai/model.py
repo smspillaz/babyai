@@ -316,27 +316,9 @@ class StateEncoder(nn.Module):
                  arch="bow_endpool_res"):
         super().__init__()
 
-        endpool = 'endpool' in arch
-        use_bow = 'bow' in arch
-        pixel = 'pixel' in arch
-        self.res = 'res' in arch
-
-        # Decide which components are enabled
         self.use_instr = use_instr
         self.use_memory = use_memory
-        self.arch = arch
-        self.lang_model = lang_model
-        if self.res and image_dim != 128:
-            raise ValueError(f"image_dim is {image_dim}, expected 128")
         self.image_dim = image_dim
-        self.memory_dim = memory_dim
-        self.instr_dim = instr_dim
-
-        self.obs_space = obs_space
-
-        for part in self.arch.split('_'):
-            if part not in ['original', 'bow', 'pixels', 'endpool', 'res']:
-                raise ValueError("Incorrect architecture name: {}".format(self.arch))
 
         self.image_encoder = ImageEncoder(
             obs_space,
