@@ -224,6 +224,58 @@ class FiLMImageAttention(nn.Module):
         return x
 
 
+class MemoryLanguageAttention(nn.Module):
+    def __init__(self,
+                 instr_dim,
+                 memory_dim=128,
+                 arch="bow_endpool_res",
+                 lang_model="gru"):
+        super().__init__()
+
+        endpool = 'endpool' in arch
+        use_bow = 'bow' in arch
+        pixel = 'pixel' in arch
+        self.res = 'res' in arch
+
+        self.arch = arch
+        self.lang_model = lang_model
+        self.memory_dim = memory_dim
+
+        if self.lang_model == 'attgru':
+            self.memory2key = nn.Linear(self.memory_size, instr_dim)
+
+    @property
+    def memory_size(self):
+        return 2 * self.semi_memory_size
+
+    @property
+    def semi_memory_size(self):
+        return self.memory_dim
+
+    def forward(self, instr, instr_embedding, memory):
+        if self.lang_model == "attgru":
+            # outputs: B x L x D
+            # memory: B x M
+            mask = (instr != 0).float()
+            # The mask tensor has the same length as obs.instr, and
+            # thus can be both shorter and longer than instr_embedding.
+            # It can be longer if instr_embedding is computed
+            # for a subbatch of obs.instr.
+            # It can be shorter if obs.instr is a subbatch of
+            # the batch that instr_embeddings was computed for.
+            # Here, we make sure that mask and instr_embeddings
+            # have equal length along dimension 1.
+            mask = mask[:, :instr_embedding.shape[1]]
+            instr_embedding = instr_embedding[:, :mask.shape[1]]
+
+            keys = self.memory2key(memory)
+            pre_softmax = (keys[:, None, :] * instr_embedding).sum(2) + 1000 * mask
+            attention = F.softmax(pre_softmax, dim=1)
+            instr_embedding = (instr_embedding * attention[:, :, None]).sum(1)
+
+        return instr_embedding
+
+
 class StateEncoder(nn.Module):
     def __init__(self,
                  obs_space,
@@ -278,8 +330,12 @@ class StateEncoder(nn.Module):
                 arch=arch
             )
 
-            if self.lang_model == 'attgru':
-                self.memory2key = nn.Linear(self.memory_size, self.language_encoder.final_instr_dim)
+            self.memory_language_attention = MemoryLanguageAttention(
+                instr_dim,
+                memory_dim=memory_dim,
+                lang_model=lang_model,
+                arch=arch
+            )
 
         self.film_image_attention = FiLMImageAttention(
             self.image_dim,
@@ -293,35 +349,22 @@ class StateEncoder(nn.Module):
 
     @property
     def memory_size(self):
-        return 2 * self.semi_memory_size
+        return self.memory_language_attention.memory_size
 
     @property
     def semi_memory_size(self):
-        return self.memory_dim
+        return self.memory_language_attention.semi_memory_size
 
     def forward(self, obs, memory, instr_embedding):
         if self.use_instr and instr_embedding is None:
             instr_embedding = self.language_encoder(obs.instr)
 
-        if self.use_instr and self.lang_model == "attgru":
-            # outputs: B x L x D
-            # memory: B x M
-            mask = (obs.instr != 0).float()
-            # The mask tensor has the same length as obs.instr, and
-            # thus can be both shorter and longer than instr_embedding.
-            # It can be longer if instr_embedding is computed
-            # for a subbatch of obs.instr.
-            # It can be shorter if obs.instr is a subbatch of
-            # the batch that instr_embeddings was computed for.
-            # Here, we make sure that mask and instr_embeddings
-            # have equal length along dimension 1.
-            mask = mask[:, :instr_embedding.shape[1]]
-            instr_embedding = instr_embedding[:, :mask.shape[1]]
-
-            keys = self.memory2key(memory)
-            pre_softmax = (keys[:, None, :] * instr_embedding).sum(2) + 1000 * mask
-            attention = F.softmax(pre_softmax, dim=1)
-            instr_embedding = (instr_embedding * attention[:, :, None]).sum(1)
+        if self.use_instr:
+            instr_embedding = self.memory_language_attention(
+                obs.instr,
+                instr_embedding,
+                memory
+            )
 
         x = self.image_encoder(obs.image)
         x = self.film_image_attention(x, instr_embedding if self.use_instr else None)
