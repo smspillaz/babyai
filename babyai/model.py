@@ -604,3 +604,161 @@ class HierarchicalACModel(nn.Module, babyai.rl.RecurrentACModel):
             'memory': memory,
             'extra_predictions': extra_predictions
         }
+
+
+class LanguageConditionedHierarchicalACModel(nn.Module, babyai.rl.RecurrentACModel):
+    def __init__(self, obs_space, action_space,
+                 image_dim=128, memory_dim=128, instr_dim=128,
+                 use_instr=False, lang_model="gru", use_memory=False,
+                 arch="bow_endpool_res", aux_info=None, p_range=(5, 15), latent_size=16):
+        """Implements HiPPO within the ACModel, using the language with the manager.
+
+        Here the manager gets the language and the lower level policy doesn't. The manager
+        produces some latent which the worker is supposed to follow.
+
+        Note here that we can't use the same abstraction for the manager and the worker
+        they get different inputs by design.
+        """
+        super().__init__()
+        self.use_instr = use_instr
+        self.use_memory = use_memory
+        self.image_dim = image_dim
+
+        self.image_encoder = ImageEncoder(
+            obs_space,
+            image_dim=image_dim,
+            arch=arch
+        )
+
+        # Define instruction embedding
+        if self.use_instr:
+            self.language_encoder = LanguageEncoder(
+                obs_space,
+                instr_dim,
+                lang_model=lang_model,
+                arch=arch
+            )
+
+            self.memory_language_attention = MemoryLanguageAttention(
+                instr_dim,
+                memory_dim=memory_dim,
+                lang_model=lang_model,
+                arch=arch
+            )
+
+        self.film_image_attention = FiLMImageAttention(
+            self.image_dim,
+            self.language_encoder.final_instr_dim,
+            arch=arch
+        )
+
+        if self.use_memory:
+            self.memory = Memory(
+                image_dim,
+                memory_dim=memory_dim
+            )
+            self.embedding_size = self.memory.semi_memory_size
+        else:
+            self.embedding_size = image_dim
+
+
+        # Define memory and resize image embedding
+        self.embedding_size = image_dim
+        self.latent_size = latent_size
+        self.action_space = action_space
+        self.countdown = 0
+
+        # Define the manager model. The manager sees everything.
+        self.manager = nn.Sequential(
+            nn.Linear(self.embedding_size, 64),
+            nn.Tanh(),
+            nn.Linear(64, self.latent_size)
+        )
+
+        # Define actor's model. The actor sees only the image
+        # latent before FiLM has been applied.
+        self.actor = nn.Sequential(
+            nn.Linear(self.image_dim + self.latent_size, 64),
+            nn.Tanh(),
+            nn.Linear(64, action_space.n)
+        )
+
+        # Define critic's model. The critic sees everything,
+        # since it needs to estimate the value function.
+        self.critic = nn.Sequential(
+            nn.Linear(self.embedding_size, 64),
+            nn.Tanh(),
+            nn.Linear(64, 1)
+        )
+
+        # Initialize parameters correctly
+        self.apply(initialize_parameters)
+
+        # Define head for extra info
+        self.extra_heads = ExtraHeads(self.embedding_size, aux_info)
+
+    def add_heads(self):
+        self.extra_heads.add_heads()
+
+    def add_extra_heads_if_necessary(self, aux_info):
+        self.extra_heads.add_extra_heads_if_necessary(self, aux_info)
+
+    @property
+    def memory_size(self):
+        return self.memory.memory_size
+
+    @property
+    def semi_memory_size(self):
+        return self.memory.semi_memory_size
+
+    def forward(self, obs, memory, instr_embedding=None, manager_latent=None):
+        manager_latent = (
+            torch.zeros(
+                memory.shape[0], self.latent_size, device=memory.device
+            )
+            if manager_latent is None else manager_latent
+        )
+
+        # Produce encodings
+        if self.use_instr and instr_embedding is None:
+            instr_embedding = self.language_encoder(obs.instr)
+
+        if self.use_instr:
+            instr_embedding = self.memory_language_attention(
+                obs.instr,
+                instr_embedding,
+                memory
+            )
+
+        img_encoding = self.image_encoder(obs.image)
+        attended_img = self.film_image_attention(img_encoding, instr_embedding if self.use_instr else None)
+
+        if self.use_memory:
+            embedding, memory = self.memory(attended_img, memory)
+        else:
+            embedding = attended_img
+
+        actor_pooled_img = self.film_image_attention(img_encoding, None)
+        x = self.actor(torch.cat([
+            # film_image_attention just pools the image if there is no
+            # instruction, it does not do any attention
+            actor_pooled_img,
+            manager_latent
+        ], dim=-1))
+        dist = Categorical(logits=F.log_softmax(x, dim=-1))
+
+        x = self.manager(embedding)
+        manager_dist = Categorical(logits=F.log_softmax(x, dim=-1))
+
+        x = self.critic(embedding)
+        value = x.squeeze(1)
+
+        extra_predictions = self.extra_heads(embedding)
+
+        return {
+            'dist': dist,
+            'manager_dist': manager_dist,
+            'value': value,
+            'memory': memory,
+            'extra_predictions': extra_predictions
+        }
