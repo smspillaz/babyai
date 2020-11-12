@@ -334,7 +334,7 @@ class StateEncoder(nn.Module):
         else:
             embedding = x
         
-        return embedding
+        return embedding, memory
 
 
 class ExtraHeads(nn.Module):
@@ -444,7 +444,7 @@ class ACModel(nn.Module, babyai.rl.RecurrentACModel):
         return self.state_encoder.semi_memory_size
 
     def forward(self, obs, memory, instr_embedding=None):
-        embedding = self.state_encoder(obs, memory, instr_embedding)
+        embedding, memory = self.state_encoder(obs, memory, instr_embedding)
 
         x = self.actor(embedding)
         dist = Categorical(logits=F.log_softmax(x, dim=1))
@@ -534,7 +534,7 @@ class HierarchicalACModel(nn.Module, babyai.rl.RecurrentACModel):
             )
             if manager_latent is None else manager_latent
         )
-        embedding = self.state_encoder(obs, memory, instr_embedding)
+        embedding, memory = self.state_encoder(obs, memory, instr_embedding)
 
         x = self.actor(torch.cat([embedding, manager_latent], dim=-1))
         dist = Categorical(logits=F.log_softmax(x, dim=-1))
