@@ -450,7 +450,7 @@ class ACModel(nn.Module, babyai.rl.RecurrentACModel):
                                           arch)
 
         # Define memory and resize image embedding
-        self.embedding_size = image_dim
+        self.embedding_size = self.state_encoder.embedding_size
 
         # Define actor's model
         self.actor = nn.Sequential(
