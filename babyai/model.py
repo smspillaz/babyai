@@ -59,6 +59,54 @@ class ImageBOWEmbedding(nn.Module):
        return self.embedding(inputs).sum(1).permute(0, 3, 1, 2)
 
 
+class ImageEncoder(nn.Module):
+    def __init__(self,
+                 obs_space,
+                 image_dim=128,
+                 arch="bow_endpool_res"):
+        super().__init__()
+        endpool = 'endpool' in arch
+        use_bow = 'bow' in arch
+        pixel = 'pixel' in arch
+        self.res = 'res' in arch
+
+        self.arch = arch
+
+        if self.res and image_dim != 128:
+            raise ValueError(f"image_dim is {image_dim}, expected 128")
+        self.image_dim = image_dim
+
+        for part in self.arch.split('_'):
+            if part not in ['original', 'bow', 'pixels', 'endpool', 'res']:
+                raise ValueError("Incorrect architecture name: {}".format(self.arch))
+
+        self.image_conv = nn.Sequential(*[
+            *([ImageBOWEmbedding(obs_space['image'], 128)] if use_bow else []),
+            *([nn.Conv2d(
+                in_channels=3, out_channels=128, kernel_size=(8, 8),
+                stride=8, padding=0)] if pixel else []),
+            nn.Conv2d(
+                in_channels=128 if use_bow or pixel else 3, out_channels=128,
+                kernel_size=(3, 3) if endpool else (2, 2), stride=1, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(),
+            *([] if endpool else [nn.MaxPool2d(kernel_size=(2, 2), stride=2)]),
+            nn.Conv2d(in_channels=128, out_channels=128, kernel_size=(3, 3), padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(),
+            *([] if endpool else [nn.MaxPool2d(kernel_size=(2, 2), stride=2)])
+        ])
+
+    def forward(self, x):
+        x = torch.transpose(torch.transpose(x, 1, 3), 2, 3)
+
+        if 'pixel' in self.arch:
+            x /= 256.0
+        x = self.image_conv(x)
+
+        return x
+
+
 class StateEncoder(nn.Module):
     def __init__(self,
                  obs_space,
@@ -94,24 +142,14 @@ class StateEncoder(nn.Module):
             if part not in ['original', 'bow', 'pixels', 'endpool', 'res']:
                 raise ValueError("Incorrect architecture name: {}".format(self.arch))
 
+        self.image_encoder = ImageEncoder(
+            obs_space,
+            image_dim=image_dim,
+            arch=arch
+        )
+
         # if not self.use_instr:
         #     raise ValueError("FiLM architecture can be used when instructions are enabled")
-        self.image_conv = nn.Sequential(*[
-            *([ImageBOWEmbedding(obs_space['image'], 128)] if use_bow else []),
-            *([nn.Conv2d(
-                in_channels=3, out_channels=128, kernel_size=(8, 8),
-                stride=8, padding=0)] if pixel else []),
-            nn.Conv2d(
-                in_channels=128 if use_bow or pixel else 3, out_channels=128,
-                kernel_size=(3, 3) if endpool else (2, 2), stride=1, padding=1),
-            nn.BatchNorm2d(128),
-            nn.ReLU(),
-            *([] if endpool else [nn.MaxPool2d(kernel_size=(2, 2), stride=2)]),
-            nn.Conv2d(in_channels=128, out_channels=128, kernel_size=(3, 3), padding=1),
-            nn.BatchNorm2d(128),
-            nn.ReLU(),
-            *([] if endpool else [nn.MaxPool2d(kernel_size=(2, 2), stride=2)])
-        ])
         self.film_pool = nn.MaxPool2d(kernel_size=(7, 7) if endpool else (2, 2), stride=2)
 
         # Define instruction embedding
@@ -181,11 +219,8 @@ class StateEncoder(nn.Module):
             attention = F.softmax(pre_softmax, dim=1)
             instr_embedding = (instr_embedding * attention[:, :, None]).sum(1)
 
-        x = torch.transpose(torch.transpose(obs.image, 1, 3), 2, 3)
+        x = self.image_encoder(obs.image)
 
-        if 'pixel' in self.arch:
-            x /= 256.0
-        x = self.image_conv(x)
         if self.use_instr:
             for controller in self.controllers:
                 out = controller(x, instr_embedding)
@@ -363,4 +398,3 @@ class ACModel(nn.Module, babyai.rl.RecurrentACModel):
         extra_predictions = self.extra_heads(embedding)
 
         return {'dist': dist, 'value': value, 'memory': memory, 'extra_predictions': extra_predictions}
-
