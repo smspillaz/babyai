@@ -344,10 +344,6 @@ class StateEncoder(nn.Module):
             arch=arch
         )
 
-        # if not self.use_instr:
-        #     raise ValueError("FiLM architecture can be used when instructions are enabled")
-        self.film_pool = nn.MaxPool2d(kernel_size=(7, 7) if endpool else (2, 2), stride=2)
-
         # Define instruction embedding
         if self.use_instr:
             self.language_encoder = LanguageEncoder(
