@@ -19,7 +19,7 @@ import babyai
 import babyai.utils as utils
 import babyai.rl
 from babyai.arguments import ArgumentParser
-from babyai.model import ACModel, HierarchicalACModel
+from babyai.model import ACModel, HierarchicalACModel, LanguageConditionedHierarchicalACModel
 from babyai.evaluate import batch_evaluate
 from babyai.utils.agent import ModelAgent
 from gym_minigrid.wrappers import RGBImgPartialObsWrapper
@@ -93,9 +93,9 @@ if acmodel is None:
     if args.pretrained_model:
         acmodel = utils.load_model(args.pretrained_model, raise_not_found=True)
     else:
-        acmodel = HierarchicalACModel(obss_preprocessor.obs_space, envs[0].action_space,
+        acmodel = LanguageConditionedHierarchicalACModel(obss_preprocessor.obs_space, envs[0].action_space,
                           args.image_dim, args.memory_dim, args.instr_dim,
-                          not args.no_instr, args.instr_arch, not args.no_mem, args.arch, latent_size=8)
+                          not args.no_instr, args.instr_arch, not args.no_mem, args.arch, latent_size=64)
 
 obss_preprocessor.vocab.save()
 utils.save_model(acmodel, args.model)
