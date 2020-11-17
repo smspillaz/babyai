@@ -49,6 +49,9 @@ args = parser.parse_args()
 
 utils.seed(args.seed)
 
+if os.environ.get("TORCH_DETECT_ANOMALY", None):
+    torch.set_anomaly_enabled(True)
+
 # Generate environments
 envs = []
 use_pixel = 'pixel' in args.arch
