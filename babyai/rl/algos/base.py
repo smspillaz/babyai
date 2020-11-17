@@ -178,7 +178,7 @@ class BaseAlgo(ABC):
 
             if curr_manager_action is None or timepoints[i] == 1.0:
                 tau = (0.0 if num_frames is None else (
-                    1.0 - num_frames / 10000000
+                    max(0.0, 1.0 - num_frames / 10000000)
                 ))
                 curr_manager_action = torch.nn.functional.gumbel_softmax(manager_dist.logits, tau, dim=-1).argmax(dim=-1)
 
