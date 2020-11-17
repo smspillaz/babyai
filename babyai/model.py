@@ -745,10 +745,10 @@ class LanguageConditionedHierarchicalACModel(nn.Module, babyai.rl.RecurrentACMod
             actor_pooled_img,
             manager_latent
         ], dim=-1))
-        dist = Categorical(logits=F.log_softmax(x, dim=-1))
+        dist = Categorical(logits=x)
 
         x = self.manager(embedding)
-        manager_dist = Categorical(logits=F.log_softmax(x, dim=-1))
+        manager_dist = Categorical(logits=torch.clamp(x, -50.0, 50.0))
 
         x = self.critic(embedding)
         value = x.squeeze(1)
