@@ -195,7 +195,7 @@ class FiLMPooling(nn.Module):
         return x
 
 
-class FiLMImageAttention(nn.Module):
+class FiLMImageConditioning(nn.Module):
     def __init__(self,
                  image_dim,
                  instr_dim,
@@ -353,7 +353,7 @@ class StateEncoder(nn.Module):
                 arch=arch
             )
 
-            self.film_image_attention = FiLMImageAttention(
+            self.film_image_conditioning = FiLMImageConditioning(
                 self.image_dim,
                 self.language_encoder.final_instr_dim,
                 arch=arch
@@ -391,7 +391,7 @@ class StateEncoder(nn.Module):
                 memory
             )
 
-            x = self.film_image_attention(x, instr_embedding if self.use_instr else None)
+            x = self.film_image_conditioning(x, instr_embedding if self.use_instr else None)
 
         x = self.film_pooling(x)
 
