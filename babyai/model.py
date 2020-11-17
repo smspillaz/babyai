@@ -180,6 +180,21 @@ class LanguageEncoder(nn.Module):
             ValueError("Undefined instruction architecture: {}".format(self.use_instr))
 
 
+class FiLMPooling(nn.Module):
+    def __init__(self,
+                 arch="bow_endpool_res"):
+        super().__init__()
+
+        endpool = 'endpool' in arch
+        self.film_pool = nn.MaxPool2d(kernel_size=(7, 7) if endpool else (2, 2), stride=2)
+
+    def forward(self, x, *args, **kwargs):
+        x = F.relu(self.film_pool(x))
+        x = x.reshape(x.shape[0], -1)
+
+        return x
+
+
 class FiLMImageAttention(nn.Module):
     def __init__(self,
                  image_dim,
@@ -207,8 +222,6 @@ class FiLMImageAttention(nn.Module):
             self.controllers.append(mod)
             self.add_module('FiLM_' + str(ni), mod)
 
-        self.film_pool = nn.MaxPool2d(kernel_size=(7, 7) if endpool else (2, 2), stride=2)
-
     def forward(self, img_embedding, instr_embedding):
         x = img_embedding
 
@@ -218,8 +231,6 @@ class FiLMImageAttention(nn.Module):
                 if self.res:
                     out += x
                 x = out
-        x = F.relu(self.film_pool(x))
-        x = x.reshape(x.shape[0], -1)
 
         return x
 
@@ -342,11 +353,13 @@ class StateEncoder(nn.Module):
                 arch=arch
             )
 
-        self.film_image_attention = FiLMImageAttention(
-            self.image_dim,
-            self.language_encoder.final_instr_dim,
-            arch=arch
-        )
+            self.film_image_attention = FiLMImageAttention(
+                self.image_dim,
+                self.language_encoder.final_instr_dim,
+                arch=arch
+            )
+
+        self.film_pooling = FiLMPooling(arch=arch)
 
         if self.use_memory:
             self.memory = Memory(
@@ -366,6 +379,8 @@ class StateEncoder(nn.Module):
         return self.memory.semi_memory_size
 
     def forward(self, obs, memory, instr_embedding):
+        x = self.image_encoder(obs.image)
+
         if self.use_instr and instr_embedding is None:
             instr_embedding = self.language_encoder(obs.instr)
 
@@ -376,8 +391,9 @@ class StateEncoder(nn.Module):
                 memory
             )
 
-        x = self.image_encoder(obs.image)
-        x = self.film_image_attention(x, instr_embedding if self.use_instr else None)
+            x = self.film_image_attention(x, instr_embedding if self.use_instr else None)
+
+        x = self.film_pooling(x)
 
         if self.use_memory:
             embedding, memory = self.memory(x, memory)
@@ -646,11 +662,13 @@ class LanguageConditionedHierarchicalACModel(nn.Module, babyai.rl.RecurrentACMod
                 arch=arch
             )
 
-        self.film_image_attention = FiLMImageAttention(
-            self.image_dim,
-            self.language_encoder.final_instr_dim,
-            arch=arch
-        )
+            self.film_image_attention = FiLMImageAttention(
+                self.image_dim,
+                self.language_encoder.final_instr_dim,
+                arch=arch
+            )
+
+        self.film_pooling = FiLMPooling(arch=arch)
 
         if self.use_memory:
             self.memory = Memory(
@@ -711,13 +729,15 @@ class LanguageConditionedHierarchicalACModel(nn.Module, babyai.rl.RecurrentACMod
     def semi_memory_size(self):
         return self.memory.semi_memory_size
 
-    def forward(self, obs, memory, instr_embedding=None, manager_latent=None):
+    def forward(self, obs, memory, instr_embedding=None, manager_latent=None, manager_map=None):
         manager_latent = (
             torch.zeros(
                 memory.shape[0], self.latent_size, device=memory.device
             )
             if manager_latent is None else manager_latent
         )
+
+        img_encoding = self.image_encoder(obs.image)
 
         # Produce encodings
         if self.use_instr and instr_embedding is None:
@@ -730,15 +750,18 @@ class LanguageConditionedHierarchicalACModel(nn.Module, babyai.rl.RecurrentACMod
                 memory
             )
 
-        img_encoding = self.image_encoder(obs.image)
-        attended_img = self.film_image_attention(img_encoding, instr_embedding if self.use_instr else None)
+            attended_img = self.film_image_attention(img_encoding, instr_embedding if self.use_instr else None)
+        else:
+            attended_img = img_encoding
+
+        pooled_attended_img = self.film_pooling(attended_img)
 
         if self.use_memory:
-            embedding, memory = self.memory(attended_img, memory)
+            embedding, memory = self.memory(pooled_attended_img, memory)
         else:
             embedding = attended_img
 
-        actor_pooled_img = self.film_image_attention(img_encoding, None)
+        actor_pooled_img = pooled_attended_img
         x = self.actor(torch.cat([
             # film_image_attention just pools the image if there is no
             # instruction, it does not do any attention
