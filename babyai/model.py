@@ -195,7 +195,7 @@ class FiLMPooling(nn.Module):
         return x
 
 
-class FiLMImageAttention(nn.Module):
+class FiLMImageConditioning(nn.Module):
     def __init__(self,
                  image_dim,
                  instr_dim,
@@ -353,7 +353,7 @@ class StateEncoder(nn.Module):
                 arch=arch
             )
 
-            self.film_image_attention = FiLMImageAttention(
+            self.film_image_conditioning = FiLMImageConditioning(
                 self.image_dim,
                 self.language_encoder.final_instr_dim,
                 arch=arch
@@ -391,7 +391,7 @@ class StateEncoder(nn.Module):
                 memory
             )
 
-            x = self.film_image_attention(x, instr_embedding if self.use_instr else None)
+            x = self.film_image_conditioning(x, instr_embedding if self.use_instr else None)
 
         x = self.film_pooling(x)
 
@@ -662,7 +662,7 @@ class LanguageConditionedHierarchicalACModel(nn.Module, babyai.rl.RecurrentACMod
                 arch=arch
             )
 
-            self.film_image_attention = FiLMImageAttention(
+            self.film_image_conditioning = FiLMImageConditioning(
                 self.image_dim,
                 self.language_encoder.final_instr_dim,
                 arch=arch
@@ -750,7 +750,7 @@ class LanguageConditionedHierarchicalACModel(nn.Module, babyai.rl.RecurrentACMod
                 memory
             )
 
-            attended_img = self.film_image_attention(img_encoding, instr_embedding if self.use_instr else None)
+            attended_img = self.film_image_conditioning(img_encoding, instr_embedding if self.use_instr else None)
         else:
             attended_img = img_encoding
 
@@ -763,7 +763,7 @@ class LanguageConditionedHierarchicalACModel(nn.Module, babyai.rl.RecurrentACMod
 
         actor_pooled_img = pooled_attended_img
         x = self.actor(torch.cat([
-            # film_image_attention just pools the image if there is no
+            # film_image_conditioning just pools the image if there is no
             # instruction, it does not do any attention
             actor_pooled_img,
             manager_latent
