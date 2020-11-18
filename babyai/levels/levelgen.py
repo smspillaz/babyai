@@ -2,6 +2,7 @@ import random
 from collections import OrderedDict
 from copy import deepcopy
 import gym
+from gym import spaces
 from gym_minigrid.roomgrid import RoomGrid
 from .verifier import *
 
@@ -31,6 +32,72 @@ class RoomGridLevel(RoomGrid):
             room_size=room_size,
             **kwargs
         )
+
+        self.observation_space = spaces.Box(
+            low=0,
+            high=255,
+            shape=(self.grid.width, self.grid.height, 3),
+            dtype='uint8'
+        )
+        self.observation_space = spaces.Dict({
+            'image': self.observation_space
+        })
+
+    def get_view_exts(self):
+        return (0, 0, self.grid.width, self.grid.height)
+
+    def relative_coords(self, x, y):
+        """
+        Check if a grid position belongs to the agent's field of view, and returns the corresponding coordinates
+        """
+
+        vx, vy = self.get_view_coords(x, y)
+
+        return vx, vy
+
+    def in_view(self, x, y):
+        """
+        check if a grid position is visible to the agent
+        """
+
+        return self.relative_coords(x, y) is not None
+
+    def agent_sees(self, x, y):
+        """
+        Check if a non-empty grid position is visible to the agent
+        """
+        return True
+
+    def gen_obs_grid(self):
+        """
+        Generate the sub-grid observed by the agent.
+        This method also outputs a visibility mask telling us which grid
+        cells the agent can actually see.
+        """
+
+        grid = self.grid.copy()
+        vis_mask = np.ones(shape=(grid.width, grid.height), dtype=np.bool)
+
+        # Make it so the agent sees what it's carrying
+        # We do this by placing the carried object at the agent's position
+        # in the agent's partially observable view
+        agent_pos = self.agent_pos
+        if self.carrying:
+            grid.set(*agent_pos, self.carrying)
+        else:
+            grid.set(*agent_pos, None)
+
+        return grid, vis_mask
+
+    def gen_obs(self):
+        """
+        Generate the agent's view (partially observable, low-resolution encoding)
+        """
+        obs = super().gen_obs()
+        obs["image"][self.agent_pos[1], self.agent_pos[0], 0] = 10
+
+        return obs
+
 
     def reset(self, **kwargs):
         obs = super().reset(**kwargs)
