@@ -237,7 +237,13 @@ while status['num_frames'] < args.frames:
         agent = ModelAgent(args.model, obss_preprocessor, argmax=True, timepoint_bounds=(5, 15))
         agent.model = acmodel
         agent.model.eval()
-        logs = batch_evaluate(agent, test_env_name, args.val_seed, args.val_episodes, pixel=use_pixel)
+        logs = batch_evaluate(agent, test_env_name, args.val_seed, args.val_episodes, pixel=use_pixel, return_obss_actions=True)
+        order = sorted(range(len(logs['return_per_episode'])), key=lambda i: logs["observations_per_episode"][i][0]["mission"])
+        for i in order:
+            obs = logs["observations_per_episode"][i]
+            acts = logs["manager_actions_per_episode"][i]
+            masks = logs["manager_observation_masks_per_episode"][i]
+            print(obs[0]["mission"], acts, masks[0])
         agent.model.train()
         mean_return = np.mean(logs["return_per_episode"])
         success_rate = np.mean([1 if r > 0 else 0 for r in logs['return_per_episode']])
