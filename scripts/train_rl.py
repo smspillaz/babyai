@@ -248,6 +248,8 @@ while status['num_frames'] < args.frames:
         mean_return = np.mean(logs["return_per_episode"])
         success_rate = np.mean([1 if r > 0 else 0 for r in logs['return_per_episode']])
         save_model = False
+
+        logger.info("Success rate: {}, best".format(success_rate, best_success_rate))
         if success_rate > best_success_rate:
             best_success_rate = success_rate
             save_model = True
