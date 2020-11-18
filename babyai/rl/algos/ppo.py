@@ -93,13 +93,15 @@ class PPOAlgo(BaseAlgo):
                     model_results = self.acmodel(
                         sb.obs,
                         memory * sb.mask,
-                        manager_latent=torch.nn.functional.one_hot(
+                        manager_observation_latent=sb.manager_observation_mask,
+                        manager_action_latent=torch.nn.functional.one_hot(
                             sb.manager_action.to(torch.long),
-                            self.acmodel.latent_size
+                            self.acmodel.observation_latent_size
                         ).to(torch.float)
                     )
                     dist = model_results['dist']
                     manager_dist = model_results['manager_dist']
+                    manager_observation_probs = model_results['manager_observation_probs']
                     value = model_results['value']
                     memory = model_results['memory']
                     extra_predictions = model_results['extra_predictions']
@@ -110,6 +112,12 @@ class PPOAlgo(BaseAlgo):
                     manager_policy_loss = -torch.min(manager_surr1, manager_surr2).mean()
 
                     manager_entropy = manager_dist.entropy().mean()
+
+                    manager_observation_surr1 = (manager_observation_probs * sb.manager_observation_mask).sum(dim=-1) * sb.advantage * sb.timeline
+                    manager_observation_loss = -manager_observation_surr1.mean()
+
+                    manager_observation_cost = (manager_observation_probs * sb.manager_observation_mask).sum(dim=-1) * sb.timeline
+                    manager_observation_cost = manager_observation_cost.mean()
 
                     ratio = torch.exp(dist.log_prob(sb.action) - sb.log_prob)
                     surr1 = ratio * sb.advantage
@@ -123,7 +131,11 @@ class PPOAlgo(BaseAlgo):
                     surr2 = (value_clipped - sb.returnn).pow(2)
                     value_loss = torch.max(surr1, surr2).mean()
 
-                    loss = manager_policy_loss + policy_loss - self.entropy_coef * entropy - self.entropy_coef * manager_entropy + self.value_loss_coef * value_loss
+                    loss = manager_observation_loss + manager_policy_loss + policy_loss - self.entropy_coef * entropy - self.entropy_coef * manager_entropy + self.value_loss_coef * value_loss + manager_observation_cost
+
+                    if torch.isnan(loss.flatten()).any():
+                        import pdb
+                        pdb.set_trace()
 
                     # Update batch values
 

@@ -51,6 +51,7 @@ class ModelAgent(Agent):
         self.memory = None
         self.countdown = 0
         self.manager_action = None
+        self.manager_observation_mask = None
         self.timepoint_bounds = timepoint_bounds
 
     def act_batch(self, many_obs):
@@ -65,23 +66,25 @@ class ModelAgent(Agent):
             model_results = self.model(
                 preprocessed_obs,
                 self.memory,
-                manager_latent=(
+                manager_action_latent=(
                     None if self.manager_action is None
                     else torch.nn.functional.one_hot(
                         self.manager_action.to(torch.long),
-                        self.model.latent_size
+                        self.model.action_latent_size
                     ).to(torch.float)
-                )
+                ),
+                manager_observation_latent=self.manager_observation_mask
             )
             dist = model_results['dist']
             manager_dist = model_results['manager_dist']
+            manager_observation_probs = model_results['manager_observation_probs']
             value = model_results['value']
             self.memory = model_results['memory']
 
         if self.countdown == 0:
             self.countdown = numpy.random.choice(numpy.arange(*self.timepoint_bounds))
-            print(manager_dist.probs.argmax(1))
             self.manager_action = manager_dist.probs.argmax(1) if self.argmax else manager_dist.sample()
+            self.manager_observation_mask = manager_observation_probs.round().detach()
         else:
             self.countdown -= 1
 
@@ -92,6 +95,7 @@ class ModelAgent(Agent):
 
         return {'action': action,
                 'manager_action': self.manager_action,
+                'manager_observation_mask': self.manager_observation_mask,
                 'dist': dist,
                 'manager_dist': manager_dist,
                 'value': value}

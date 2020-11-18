@@ -109,6 +109,8 @@ class BaseAlgo(ABC):
         self.masks = torch.zeros(*shape, device=self.device)
         self.actions = torch.zeros(*shape, device=self.device, dtype=torch.int)
         self.manager_actions = torch.zeros(*shape, device=self.device, dtype=torch.int)
+        self.manager_observation_masks = torch.zeros(*shape, self.acmodel.observation_latent_size, device=self.device, dtype=torch.float)
+        self.manager_observation_probs = torch.zeros(*shape, self.acmodel.observation_latent_size, device=self.device, dtype=torch.float)
         self.values = torch.zeros(*shape, device=self.device)
         self.rewards = torch.zeros(*shape, device=self.device)
         self.advantages = torch.zeros(*shape, device=self.device)
@@ -154,6 +156,7 @@ class BaseAlgo(ABC):
         # manager latents
         timepoints = generate_timepoints_array(self.num_frames_per_proc, *self.timepoint_bounds)
         curr_manager_action = None
+        curr_manager_observation = None
 
         for i in range(self.num_frames_per_proc):
             # Do one agent-environment interaction
@@ -165,13 +168,15 @@ class BaseAlgo(ABC):
                 model_results = self.acmodel(
                     preprocessed_obs,
                     self.memory * self.mask.unsqueeze(1),
-                    manager_latent=None if curr_manager_action is None else torch.nn.functional.one_hot(
+                    manager_observation_latent=curr_manager_observation,
+                    manager_action_latent=torch.nn.functional.one_hot(
                         curr_manager_action.to(torch.long),
-                        self.acmodel.latent_size
-                    ).to(torch.float)
+                        self.acmodel.observation_latent_size
+                    ).to(torch.float) if curr_manager_action is not None else None
                 )
                 dist = model_results['dist']
                 manager_dist = model_results['manager_dist']
+                manager_observation_probs = model_results['manager_observation_probs']
                 value = model_results['value']
                 memory = model_results['memory']
                 extra_predictions = model_results['extra_predictions']
@@ -181,6 +186,7 @@ class BaseAlgo(ABC):
                     max(0.0, 1.0 - num_frames / 10000000)
                 ))
                 curr_manager_action = manager_dist.sample()
+                curr_manager_observation = manager_observation_probs.round().detach()
 
             action = dist.sample()
 
@@ -201,6 +207,7 @@ class BaseAlgo(ABC):
             self.mask = 1 - torch.tensor(done, device=self.device, dtype=torch.float)
             self.actions[i] = action
             self.manager_actions[i] = curr_manager_action
+            self.manager_observation_masks[i] = curr_manager_observation
             self.values[i] = value
             if self.reshape_reward is not None:
                 self.rewards[i] = torch.tensor([
@@ -212,6 +219,7 @@ class BaseAlgo(ABC):
 
             self.log_probs[i] = dist.log_prob(action)
             self.manager_log_probs[i] = manager_dist.log_prob(curr_manager_action)
+            self.manager_observation_probs[i] = manager_observation_probs
 
             if self.aux_info:
                 self.aux_info_collector.fill_dictionaries(i, env_info, extra_predictions)
@@ -259,6 +267,8 @@ class BaseAlgo(ABC):
 
         # T x P x D -> P x T x D -> (P * T) x D
         exps.memory = self.memories.transpose(0, 1).reshape(-1, *self.memories.shape[2:])
+        exps.manager_observation_mask = self.manager_observation_masks.transpose(0, 1).reshape(-1, *self.manager_observation_masks.shape[2:])
+        exps.manager_observation_probs = self.manager_observation_probs.transpose(0, 1).reshape(-1, *self.manager_observation_probs.shape[2:])
         # T x P -> P x T -> (P * T) x 1
         exps.mask = self.masks.transpose(0, 1).reshape(-1).unsqueeze(1)
 

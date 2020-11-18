@@ -642,12 +642,36 @@ class Heatmap(nn.Module):
         return x
 
 
+class ManagerObservation(nn.Module):
+    def __init__(self,
+                 embedding_size,
+                 instr_embedding_size,
+                 manager_observation_size):
+        super().__init__()
+        self.embedding_size = embedding_size
+        self.instr_embedding_size = instr_embedding_size
+        self.net = nn.Sequential(
+            nn.Linear(self.embedding_size + self.instr_embedding_size, manager_observation_size),
+            nn.Tanh(),
+            nn.Linear(manager_observation_size, manager_observation_size),
+            nn.Sigmoid()
+        )
+
+    def forward(self, embedding, instr_embedding):
+        x = torch.cat([embedding, instr_embedding], dim=-1)
+        x = self.net(x)
+
+        return x
+
+
 
 class LanguageConditionedHierarchicalACModel(nn.Module, babyai.rl.RecurrentACModel):
     def __init__(self, obs_space, action_space,
                  image_dim=128, memory_dim=128, instr_dim=128,
                  use_instr=False, lang_model="gru", use_memory=False,
-                 arch="bow_endpool_res", aux_info=None, p_range=(5, 15), latent_size=16):
+                 arch="bow_endpool_res", aux_info=None, p_range=(5, 15),
+                 action_latent_size=16,
+                 observation_latent_size=16):
         """Implements HiPPO within the ACModel, using the language with the manager.
 
         Here the manager gets the language and the lower level policy doesn't. The manager
@@ -702,26 +726,33 @@ class LanguageConditionedHierarchicalACModel(nn.Module, babyai.rl.RecurrentACMod
 
         self.manager_heatmap = Heatmap(
             in_channels=self.image_dim,
-            embedding_size=latent_size
+            embedding_size=observation_latent_size
         )
 
         # Define memory and resize image embedding
         self.embedding_size = image_dim
-        self.latent_size = latent_size
+        self.action_latent_size = action_latent_size
+        self.observation_latent_size = observation_latent_size
         self.action_space = action_space
         self.countdown = 0
+
+        self.manager_observation = ManagerObservation(
+            self.embedding_size,
+            self.language_encoder.final_instr_dim,
+            self.observation_latent_size
+        )
 
         # Define the manager model. The manager sees everything.
         self.manager = nn.Sequential(
             nn.Linear(self.embedding_size, 64),
             nn.Tanh(),
-            nn.Linear(64, self.latent_size)
+            nn.Linear(64, self.action_latent_size)
         )
 
         # Define actor's model. The actor sees only the image
         # latent before FiLM has been applied.
         self.actor = nn.Sequential(
-            nn.Linear(self.image_dim + self.latent_size, 64),
+            nn.Linear(self.image_dim + self.action_latent_size, 64),
             nn.Tanh(),
             nn.Linear(64, action_space.n)
         )
@@ -754,12 +785,18 @@ class LanguageConditionedHierarchicalACModel(nn.Module, babyai.rl.RecurrentACMod
     def semi_memory_size(self):
         return self.memory.semi_memory_size
 
-    def forward(self, obs, memory, instr_embedding=None, manager_latent=None):
-        manager_latent = (
+    def forward(self, obs, memory, instr_embedding=None, manager_observation_latent=None, manager_action_latent=None):
+        manager_observation_latent = (
             torch.zeros(
-                memory.shape[0], self.latent_size, device=memory.device
+                memory.shape[0], self.observation_latent_size, device=memory.device
             )
-            if manager_latent is None else manager_latent
+            if manager_observation_latent is None else manager_observation_latent
+        )
+        manager_action_latent = (
+            torch.zeros(
+                memory.shape[0], self.action_latent_size, device=memory.device
+            )
+            if manager_action_latent is None else manager_action_latent
         )
         img_encoding = self.image_encoder(obs.image)
 
@@ -780,7 +817,7 @@ class LanguageConditionedHierarchicalACModel(nn.Module, babyai.rl.RecurrentACMod
 
         # Manager generates a heatmap from the image based on what it knows about
         # the problem. Eg, "go to the blue box" should highlight the blue box.
-        manager_map = self.manager_heatmap(attended_img, manager_latent)
+        manager_map = self.manager_heatmap(attended_img, manager_observation_latent)
 
         # Inductive bias: The manager map is a form of attention on the original image -
         # before max-pooling, the manager map highlights what we think is going to be
@@ -790,7 +827,7 @@ class LanguageConditionedHierarchicalACModel(nn.Module, babyai.rl.RecurrentACMod
             # film_image_conditioning just pools the image if there is no
             # instruction, it does not do any attention
             actor_pooled_img,
-            manager_latent
+            manager_action_latent
         ], dim=-1))
         dist = Categorical(logits=x)
 
@@ -801,6 +838,8 @@ class LanguageConditionedHierarchicalACModel(nn.Module, babyai.rl.RecurrentACMod
             embedding, memory = self.memory(pooled_attended_img, memory)
         else:
             embedding = attended_img
+
+        manager_observation_probs = self.manager_observation(embedding, instr_embedding)
 
         x = self.manager(embedding)
         manager_dist = Categorical(logits=torch.clamp(x, -50.0, 50.0))
@@ -813,6 +852,7 @@ class LanguageConditionedHierarchicalACModel(nn.Module, babyai.rl.RecurrentACMod
         return {
             'dist': dist,
             'manager_dist': manager_dist,
+            'manager_observation_probs': manager_observation_probs,
             'value': value,
             'memory': memory,
             'extra_predictions': extra_predictions
