@@ -75,8 +75,7 @@ class RoomGridLevel(RoomGrid):
         """
         check if a grid position is visible to the agent
         """
-
-        return self.relative_coords(x, y) is not None
+        return True
 
     def agent_sees(self, x, y):
         """
