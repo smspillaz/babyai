@@ -16,6 +16,21 @@ class RejectSampling(Exception):
     pass
 
 
+class Agent(WorldObj):
+    def __init__(self, carrying):
+        super().__init__('agent', 'red')
+        self.carrying = carrying
+
+
+    def encode(self):
+        """Encode the a description of this object as a 3-tuple of integers.
+
+        The object that we are carrying is in self.carrying 
+        """
+        tup = super().encode()
+        return (*tup[:2], self.carrying.encode()[0] if self.carrying else 1)
+
+
 class RoomGridLevel(RoomGrid):
     """
     Base for levels based on RoomGrid
@@ -75,29 +90,15 @@ class RoomGridLevel(RoomGrid):
         This method also outputs a visibility mask telling us which grid
         cells the agent can actually see.
         """
-
         grid = self.grid.copy()
         vis_mask = np.ones(shape=(grid.width, grid.height), dtype=np.bool)
 
-        # Make it so the agent sees what it's carrying
-        # We do this by placing the carried object at the agent's position
-        # in the agent's partially observable view
-        agent_pos = self.agent_pos
-        if self.carrying:
-            grid.set(*agent_pos, self.carrying)
-        else:
-            grid.set(*agent_pos, None)
+        grid.set(*self.agent_pos, Agent(self.carrying))
+
+        for i in range(self.agent_dir + 1):
+            grid = grid.rotate_left()
 
         return grid, vis_mask
-
-    def gen_obs(self):
-        """
-        Generate the agent's view (partially observable, low-resolution encoding)
-        """
-        obs = super().gen_obs()
-        obs["image"][self.agent_pos[1], self.agent_pos[0], 0] = 10
-
-        return obs
 
 
     def reset(self, **kwargs):
@@ -306,7 +307,7 @@ class RoomGridLevel(RoomGrid):
 
             # If there is something other than a door in this cell, it
             # blocks reachability
-            if cell and cell.type is not 'door':
+            if cell and cell.type not in ('door', 'agent'):
                 continue
 
             # Visit the horizontal and vertical neighbors
