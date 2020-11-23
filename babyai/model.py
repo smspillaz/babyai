@@ -826,7 +826,7 @@ class LanguageConditionedHierarchicalACModel(nn.Module, babyai.rl.RecurrentACMod
 
         # Manager generates a heatmap from the image based on what it knows about
         # the problem. Eg, "go to the blue box" should highlight the blue box.
-        manager_map = self.manager_heatmap(attended_img, manager_observation_latent)
+        manager_map = self.manager_heatmap(img_encoding, manager_observation_latent)
 
         # Inductive bias: The manager map is a form of attention on the original image -
         # before max-pooling, the manager map highlights what we think is going to be
