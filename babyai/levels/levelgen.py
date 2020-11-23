@@ -4,6 +4,7 @@ from copy import deepcopy
 import gym
 from gym import spaces
 from gym_minigrid.roomgrid import RoomGrid
+from gym_minigrid.minigrid import WorldObj, Box
 from .verifier import *
 
 
@@ -114,6 +115,17 @@ class RoomGridLevel(RoomGrid):
         return obs
 
     def step(self, action):
+        # Hack to prevent the agent from opening empty boxes
+        # Get the position in front of the agent
+        fwd_pos = self.front_pos
+
+        # Get the contents of the cell in front of the agent
+        fwd_cell = self.grid.get(*fwd_pos)
+
+        if action == self.actions.toggle and isinstance(fwd_cell, Box) and fwd_cell.contains is None:
+            self.step_count += 1
+            return self.gen_obs(), 0, False, {}
+
         obs, reward, done, info = super().step(action)
 
         # If we drop an object, we need to update its position in the environment
