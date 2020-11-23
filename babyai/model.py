@@ -462,6 +462,8 @@ class ACModel(nn.Module, babyai.rl.RecurrentACModel):
                  arch="bow_endpool_res", aux_info=None):
         super().__init__()
     
+        self.observation_latent_size = 1
+
         self.state_encoder = StateEncoder(obs_space,
                                           action_space,
                                           image_dim,
@@ -509,7 +511,7 @@ class ACModel(nn.Module, babyai.rl.RecurrentACModel):
     def semi_memory_size(self):
         return self.state_encoder.semi_memory_size
 
-    def forward(self, obs, memory, instr_embedding=None):
+    def forward(self, obs, memory, instr_embedding=None, **kwargs):
         embedding, memory = self.state_encoder(obs, memory, instr_embedding)
 
         x = self.actor(embedding)
@@ -520,7 +522,14 @@ class ACModel(nn.Module, babyai.rl.RecurrentACModel):
 
         extra_predictions = self.extra_heads(embedding)
 
-        return {'dist': dist, 'value': value, 'memory': memory, 'extra_predictions': extra_predictions}
+        return {
+            'dist': dist,
+            'value': value,
+            'memory': memory,
+            'manager_dist': None,
+            'manager_observation_probs': None,
+            'extra_predictions': extra_predictions
+        }
 
 
 class HierarchicalACModel(nn.Module, babyai.rl.RecurrentACModel):
