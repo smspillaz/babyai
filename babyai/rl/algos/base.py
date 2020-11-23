@@ -185,8 +185,9 @@ class BaseAlgo(ABC):
                 tau = (0.0 if num_frames is None else (
                     max(0.0, 1.0 - num_frames / 10000000)
                 ))
-                curr_manager_action = manager_dist.sample()
-                curr_manager_observation = manager_observation_probs.round().detach()
+                if manager_dist is not None:
+                    curr_manager_action = manager_dist.sample()
+                    curr_manager_observation = manager_observation_probs.round().detach()
 
             action = dist.sample()
 
@@ -206,8 +207,9 @@ class BaseAlgo(ABC):
             self.masks[i] = self.mask
             self.mask = 1 - torch.tensor(done, device=self.device, dtype=torch.float)
             self.actions[i] = action
-            self.manager_actions[i] = curr_manager_action
-            self.manager_observation_masks[i] = curr_manager_observation
+            if curr_manager_action is not None:
+                self.manager_actions[i] = curr_manager_action
+                self.manager_observation_masks[i] = curr_manager_observation
             self.values[i] = value
             if self.reshape_reward is not None:
                 self.rewards[i] = torch.tensor([
@@ -218,8 +220,10 @@ class BaseAlgo(ABC):
                 self.rewards[i] = torch.tensor(reward, device=self.device)
 
             self.log_probs[i] = dist.log_prob(action)
-            self.manager_log_probs[i] = manager_dist.log_prob(curr_manager_action)
-            self.manager_observation_probs[i] = manager_observation_probs
+
+            if manager_dist is not None:
+                self.manager_log_probs[i] = manager_dist.log_prob(curr_manager_action)
+                self.manager_observation_probs[i] = manager_observation_probs
 
             if self.aux_info:
                 self.aux_info_collector.fill_dictionaries(i, env_info, extra_predictions)

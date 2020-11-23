@@ -125,8 +125,14 @@ def batch_evaluate(agent, env_name, seed, episodes, return_obss_actions=False, p
                     if not already_done[i]:
                         obss[i].append(many_obs[i])
                         actions[i].append(action['action'][i].item())
-                        manager_actions[i].append(action['manager_action'][i].item())
-                        manager_observation_masks[i].append(action['manager_observation_mask'][i].detach())
+                        if action['manager_action'] is not None:
+                            manager_actions[i].append(action['manager_action'][i].item())
+                        else:
+                            manager_actions[i].append(None)
+                        if action['manager_observation_mask'] is not None:
+                            manager_observation_masks[i].append(action['manager_observation_mask'][i].detach())
+                        else:
+                            manager_observation_masks[i].append(None)
             many_obs, reward, done, _ = env.step(action['action'])
             agent.analyze_feedback(reward, done)
             done = np.array(done)

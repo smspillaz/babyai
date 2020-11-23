@@ -106,18 +106,25 @@ class PPOAlgo(BaseAlgo):
                     memory = model_results['memory']
                     extra_predictions = model_results['extra_predictions']
 
-                    manager_ratio = torch.exp(manager_dist.log_prob(sb.manager_action) - sb.manager_log_prob)
-                    manager_surr1 = manager_ratio * sb.advantage * sb.timeline
-                    manager_surr2 = torch.clamp(manager_ratio, 1.0 - self.clip_eps, 1.0 + self.clip_eps) * sb.advantage
-                    manager_policy_loss = -torch.min(manager_surr1, manager_surr2).mean()
 
-                    manager_entropy = manager_dist.entropy().mean()
+                    if manager_dist is not None:
+                        manager_ratio = torch.exp(manager_dist.log_prob(sb.manager_action) - sb.manager_log_prob)
+                        manager_surr1 = manager_ratio * sb.advantage * sb.timeline
+                        manager_surr2 = torch.clamp(manager_ratio, 1.0 - self.clip_eps, 1.0 + self.clip_eps) * sb.advantage
+                        manager_policy_loss = -torch.min(manager_surr1, manager_surr2).mean()
 
-                    manager_observation_surr1 = (manager_observation_probs * sb.manager_observation_mask).sum(dim=-1) * sb.advantage * sb.timeline
-                    manager_observation_loss = -manager_observation_surr1.mean()
+                        manager_entropy = manager_dist.entropy().mean()
 
-                    manager_observation_cost = (manager_observation_probs * sb.manager_observation_mask).sum(dim=-1) * sb.timeline
-                    manager_observation_cost = manager_observation_cost.mean()
+                        manager_observation_surr1 = (manager_observation_probs * sb.manager_observation_mask).sum(dim=-1) * sb.advantage * sb.timeline
+                        manager_observation_loss = -manager_observation_surr1.mean()
+
+                        manager_observation_cost = (manager_observation_probs * sb.manager_observation_mask).sum(dim=-1) * sb.timeline * 0.1
+                        manager_observation_cost = manager_observation_cost.mean()
+                    else:
+                        manager_policy_loss = 0
+                        manager_entropy = 0
+                        manager_observation_loss = 0
+                        manager_observation_cost = 0
 
                     ratio = torch.exp(dist.log_prob(sb.action) - sb.log_prob)
                     surr1 = ratio * sb.advantage

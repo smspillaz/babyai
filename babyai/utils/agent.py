@@ -83,8 +83,9 @@ class ModelAgent(Agent):
 
         if self.countdown == 0:
             self.countdown = numpy.random.choice(numpy.arange(*self.timepoint_bounds))
-            self.manager_action = manager_dist.probs.argmax(1) if self.argmax else manager_dist.sample()
-            self.manager_observation_mask = manager_observation_probs.round().detach()
+            if manager_dist is not None:
+                self.manager_action = manager_dist.probs.argmax(1) if self.argmax else manager_dist.sample()
+                self.manager_observation_mask = manager_observation_probs.round().detach()
         else:
             self.countdown -= 1
 
