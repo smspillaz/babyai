@@ -775,7 +775,7 @@ class LanguageConditionedHierarchicalACModel(nn.Module, babyai.rl.RecurrentACMod
         self.manager_observations = ManagerObservations(
             self.embedding_size,
             self.language_encoder.final_instr_dim,
-            self.observation_latent_size
+            self.observation_latent_size,
             observation_latents
         )
 
