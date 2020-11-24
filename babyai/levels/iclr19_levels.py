@@ -102,6 +102,28 @@ class Level_GoToObjS6(Level_GoToObj):
         super().__init__(room_size=6, seed=seed)
 
 
+class Level_GoToLocalStrict(RoomGridLevel):
+    """
+    Go to an object, inside a single room with no doors, no distractors
+    """
+
+    def __init__(self, room_size=8, num_dists=8, seed=None):
+        self.num_dists = num_dists
+        super().__init__(
+            num_rows=1,
+            num_cols=1,
+            room_size=room_size,
+            seed=seed
+        )
+
+    def gen_mission(self):
+        self.place_agent()
+        objs = self.add_distractors(num_distractors=self.num_dists, all_unique=False)
+        self.check_objs_reachable()
+        obj = self._rand_elem(objs)
+        self.instrs = GoToInstr(ObjDesc(obj.type, obj.color), strict=True)
+
+
 class Level_GoToLocal(RoomGridLevel):
     """
     Go to an object, inside a single room with no doors, no distractors
