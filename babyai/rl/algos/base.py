@@ -103,14 +103,15 @@ class BaseAlgo(ABC):
         self.obss = [None]*(shape[0])
 
         self.memory = torch.zeros(shape[1], self.acmodel.memory_size, device=self.device)
+        self.manager_memory = torch.zeros(shape[1], self.acmodel.memory_size, device=self.device)
         self.memories = torch.zeros(*shape, self.acmodel.memory_size, device=self.device)
 
         self.mask = torch.ones(shape[1], device=self.device)
         self.masks = torch.zeros(*shape, device=self.device)
         self.actions = torch.zeros(*shape, device=self.device, dtype=torch.int)
         self.manager_actions = torch.zeros(*shape, device=self.device, dtype=torch.int)
-        self.manager_observation_masks = torch.zeros(*shape, self.acmodel.observation_latent_size, device=self.device, dtype=torch.float)
-        self.manager_observation_probs = torch.zeros(*shape, self.acmodel.observation_latent_size, device=self.device, dtype=torch.float)
+        #self.manager_observations = torch.zeros(*shape, self.acmodel.n_latent_observations, device=self.device, dtype=torch.float)
+        #self.manager_observations_probs = torch.zeros(*shape, self.acmodel.n_latent_observations, device=self.device, dtype=torch.float)
         self.values = torch.zeros(*shape, device=self.device)
         self.rewards = torch.zeros(*shape, device=self.device)
         self.advantages = torch.zeros(*shape, device=self.device)
@@ -156,7 +157,7 @@ class BaseAlgo(ABC):
         # manager latents
         timepoints = generate_timepoints_array(self.num_frames_per_proc, *self.timepoint_bounds)
         curr_manager_action = None
-        curr_manager_observation = None
+        curr_manager_observations = None
 
         for i in range(self.num_frames_per_proc):
             # Do one agent-environment interaction
@@ -168,26 +169,16 @@ class BaseAlgo(ABC):
                 model_results = self.acmodel(
                     preprocessed_obs,
                     self.memory * self.mask.unsqueeze(1),
-                    manager_observation_latent=curr_manager_observation,
-                    manager_action_latent=torch.nn.functional.one_hot(
-                        curr_manager_action.to(torch.long),
-                        self.acmodel.observation_latent_size
-                    ).to(torch.float) if curr_manager_action is not None else None
+                    #manager_observation_latent=curr_manager_observations,
+                    manager_memory=self.manager_memory * self.mask.unsqueeze(1),
+                    manager_action_latent=curr_manager_action,
                 )
                 dist = model_results['dist']
                 manager_dist = model_results['manager_dist']
-                manager_observation_probs = model_results['manager_observation_probs']
+                #manager_observations_dists = model_results['manager_observations_dists']
                 value = model_results['value']
                 memory = model_results['memory']
                 extra_predictions = model_results['extra_predictions']
-
-            if curr_manager_action is None or timepoints[i] == 1.0:
-                tau = (0.0 if num_frames is None else (
-                    max(0.0, 1.0 - num_frames / 10000000)
-                ))
-                if manager_dist is not None:
-                    curr_manager_action = manager_dist.sample()
-                    curr_manager_observation = manager_observation_probs.round().detach()
 
             action = dist.sample()
 
@@ -197,11 +188,11 @@ class BaseAlgo(ABC):
                 # env_info = self.process_aux_info(env_info)
 
             # Update experiences values
-
             self.obss[i] = self.obs
             self.obs = obs
 
             self.memories[i] = self.memory
+            self.manager_memories[i] = self.manager_memory
             self.memory = memory
 
             self.masks[i] = self.mask
@@ -209,7 +200,7 @@ class BaseAlgo(ABC):
             self.actions[i] = action
             if curr_manager_action is not None:
                 self.manager_actions[i] = curr_manager_action
-                self.manager_observation_masks[i] = curr_manager_observation
+                #self.manager_observations[i] = curr_manager_observations
             self.values[i] = value
             if self.reshape_reward is not None:
                 self.rewards[i] = torch.tensor([
@@ -223,10 +214,17 @@ class BaseAlgo(ABC):
 
             if manager_dist is not None:
                 self.manager_log_probs[i] = manager_dist.log_prob(curr_manager_action)
-                self.manager_observation_probs[i] = manager_observation_probs
+                #self.manager_observation_probs[i] = manager_observation_probs
 
             if self.aux_info:
                 self.aux_info_collector.fill_dictionaries(i, env_info, extra_predictions)
+
+            # Update manager
+            if timepoints[i] == 1.0:
+                if manager_dist is not None:
+                    curr_manager_action = manager_dist.sample()
+                    self.manager_memory = model_results['memory']
+                    #curr_manager_observations = manager_observations_dists.sample()
 
             # Update log values
 
@@ -271,8 +269,9 @@ class BaseAlgo(ABC):
 
         # T x P x D -> P x T x D -> (P * T) x D
         exps.memory = self.memories.transpose(0, 1).reshape(-1, *self.memories.shape[2:])
-        exps.manager_observation_mask = self.manager_observation_masks.transpose(0, 1).reshape(-1, *self.manager_observation_masks.shape[2:])
-        exps.manager_observation_probs = self.manager_observation_probs.transpose(0, 1).reshape(-1, *self.manager_observation_probs.shape[2:])
+        exps.manager_memory = self.manager_memories.transpose(0, 1).reshape(-1, *self.memories.shape[2:])
+        #exps.manager_observation_mask = self.manager_observation_masks.transpose(0, 1).reshape(-1, *self.manager_observation_masks.shape[2:])
+        #exps.manager_observation_probs = self.manager_observation_probs.transpose(0, 1).reshape(-1, *self.manager_observation_probs.shape[2:])
         # T x P -> P x T -> (P * T) x 1
         exps.mask = self.masks.transpose(0, 1).reshape(-1).unsqueeze(1)
 

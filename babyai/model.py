@@ -651,24 +651,30 @@ class Heatmap(nn.Module):
         return x
 
 
-class ManagerObservation(nn.Module):
+class ManagerObservations(nn.Module):
     def __init__(self,
                  embedding_size,
                  instr_embedding_size,
-                 manager_observation_size):
+                 manager_observation_size,
+                 num_manager_observations):
         super().__init__()
         self.embedding_size = embedding_size
         self.instr_embedding_size = instr_embedding_size
-        self.net = nn.Sequential(
-            nn.Linear(self.embedding_size + self.instr_embedding_size, manager_observation_size),
-            nn.Tanh(),
-            nn.Linear(manager_observation_size, manager_observation_size),
-            nn.Sigmoid()
-        )
+        self.nets = [
+            nn.Sequential(
+                nn.Linear(self.embedding_size + self.instr_embedding_size, manager_observation_size),
+                nn.Tanh(),
+                nn.Linear(manager_observation_size, manager_observation_size)
+            )
+            for i in range(num_manager_observations)
+        ]
 
     def forward(self, embedding, instr_embedding):
         x = torch.cat([embedding, instr_embedding], dim=-1)
-        x = self.net(x)
+        x = torch.stack([
+            head(x)
+            for head in self.nets
+        ], dim=1)
 
         return x
 
@@ -680,7 +686,8 @@ class LanguageConditionedHierarchicalACModel(nn.Module, babyai.rl.RecurrentACMod
                  use_instr=False, lang_model="gru", use_memory=False,
                  arch="bow_endpool_res", aux_info=None, p_range=(5, 15),
                  action_latent_size=16,
-                 observation_latent_size=16):
+                 observation_latent_size=16,
+                 observation_latents=8):
         """Implements HiPPO within the ACModel, using the language with the manager.
 
         Here the manager gets the language and the lower level policy doesn't. The manager
@@ -698,6 +705,16 @@ class LanguageConditionedHierarchicalACModel(nn.Module, babyai.rl.RecurrentACMod
             obs_space,
             image_dim=image_dim,
             arch=arch
+        )
+
+        self.manager_action_latent_embedding = nn.Embedding(action_latent_size, 32)
+        self.manager_observation_latent_embeddings = [
+            nn.Embedding(observation_latent_size, 32)
+            for i in range(observation_latents)
+        ]
+        self.manager_observation_latent_code = nn.Linear(
+            32 * observation_latents,
+            128
         )
 
         # Define instruction embedding
@@ -722,10 +739,19 @@ class LanguageConditionedHierarchicalACModel(nn.Module, babyai.rl.RecurrentACMod
                 arch=arch
             )
 
+        self.actor_film_image_conditioning = FiLMImageConditioning(
+            self.image_dim,
+            32,
+            arch=arch
+        )
         self.film_pooling = FiLMPooling(arch=arch)
 
         if self.use_memory:
             self.memory = Memory(
+                image_dim,
+                memory_dim=memory_dim
+            )
+            self.actor_memory = Memory(
                 image_dim,
                 memory_dim=memory_dim
             )
@@ -742,13 +768,21 @@ class LanguageConditionedHierarchicalACModel(nn.Module, babyai.rl.RecurrentACMod
         self.embedding_size = image_dim
         self.action_latent_size = action_latent_size
         self.observation_latent_size = observation_latent_size
+        self.n_latent_observations = observation_latents
         self.action_space = action_space
         self.countdown = 0
 
-        self.manager_observation = ManagerObservation(
+        self.manager_observations = ManagerObservations(
             self.embedding_size,
             self.language_encoder.final_instr_dim,
             self.observation_latent_size
+            observation_latents
+        )
+
+        self.manager_observations_lang_embedding_reconstr = nn.Sequential(
+            nn.Linear(observation_latents * 32, instr_dim),
+            nn.Tanh(),
+            nn.Linear(instr_dim, instr_dim)
         )
 
         # Define the manager model. The manager sees everything.
@@ -761,7 +795,7 @@ class LanguageConditionedHierarchicalACModel(nn.Module, babyai.rl.RecurrentACMod
         # Define actor's model. The actor sees only the image
         # latent before FiLM has been applied.
         self.actor = nn.Sequential(
-            nn.Linear(self.image_dim + self.action_latent_size, 64),
+            nn.Linear(self.image_dim, 64),
             nn.Tanh(),
             nn.Linear(64, action_space.n)
         )
@@ -794,18 +828,24 @@ class LanguageConditionedHierarchicalACModel(nn.Module, babyai.rl.RecurrentACMod
     def semi_memory_size(self):
         return self.memory.semi_memory_size
 
-    def forward(self, obs, memory, instr_embedding=None, manager_observation_latent=None, manager_action_latent=None):
-        manager_observation_latent = (
-            torch.zeros(
-                memory.shape[0], self.observation_latent_size, device=memory.device
-            )
-            if manager_observation_latent is None else manager_observation_latent
-        )
+    def forward(self, obs, actor_memory, manager_memory, instr_embedding=None, manager_action_latent=None):
+        # manager_observation_latents = self.manager_observation_latent_code(
+        #     torch.cat([
+        #         torch.mean(e.weight, dim=0)
+        #         for e in self.manager_observation_latent_embeddings
+        #     ], dim=-1)
+        #     if manager_observation_latent is None
+        #     else torch.cat([
+        #         embedding, latent in
+        #         zip(
+        #             self.manager_observation_latent_embeddings,
+        #             manager_observation_latents.permute(1, 0)
+        #         )
+        #     ], dim=-1)
+        # )
         manager_action_latent = (
-            torch.zeros(
-                memory.shape[0], self.action_latent_size, device=memory.device
-            )
-            if manager_action_latent is None else manager_action_latent
+            torch.mean(self.manager_action_latent_embedding.weight, dim=0)
+            if manager_action_latent is None else self.manager_action_latent_embedding(manager_action_latent)
         )
         img_encoding = self.image_encoder(obs.image)
 
@@ -817,7 +857,7 @@ class LanguageConditionedHierarchicalACModel(nn.Module, babyai.rl.RecurrentACMod
             instr_embedding = self.memory_language_attention(
                 obs.instr,
                 instr_embedding,
-                memory
+                manager_memory
             )
 
             attended_img = self.film_image_conditioning(img_encoding, instr_embedding if self.use_instr else None)
@@ -826,43 +866,67 @@ class LanguageConditionedHierarchicalACModel(nn.Module, babyai.rl.RecurrentACMod
 
         # Manager generates a heatmap from the image based on what it knows about
         # the problem. Eg, "go to the blue box" should highlight the blue box.
-        manager_map = self.manager_heatmap(img_encoding, manager_observation_latent)
-
-        # Inductive bias: The manager map is a form of attention on the original image -
-        # before max-pooling, the manager map highlights what we think is going to be
-        # important for the actor to be able to do its job.
-        actor_pooled_img = self.film_pooling(img_encoding * manager_map)
-        x = self.actor(torch.cat([
-            # film_image_conditioning just pools the image if there is no
-            # instruction, it does not do any attention
-            actor_pooled_img,
-            manager_action_latent
-        ], dim=-1))
-        dist = Categorical(logits=x)
+        #manager_map = self.manager_heatmap(img_encoding, manager_observation_latents)
 
         # Now generate the information required for the manager
         pooled_attended_img = self.film_pooling(attended_img)
 
-        if self.use_memory:
-            embedding, memory = self.memory(pooled_attended_img, memory)
-        else:
-            embedding = attended_img
+        # UNUSED Inductive bias: The manager map is a form of attention on the original image -
+        # before max-pooling, the manager map highlights what we think is going to be
+        # important for the actor to be able to do its job.
+        actor_conditioned_image = self.actor_film_image_conditioning(img_encoding, manager_action_latent)
+        actor_pooled_img = self.film_pooling(actor_conditioned_image)
 
-        manager_observation_probs = self.manager_observation(embedding, instr_embedding)
+        if self.use_memory:
+            embedding, manager_memory = self.memory(pooled_attended_img, manager_memory)
+            embedding_actor, actor_memory = self.actor_memory(actor_pooled_img, actor_memory)
+        else:
+            embedding = pooled_attended_img
+            embedding_actor = actor_pooled_img
+
+        x = self.actor(embedding_actor)
+        dist = Categorical(logits=x)
+
+        # manager_observations = self.manager_observations(embedding, instr_embedding)
+        # manager_observations_dists = Categorical(logits=manager_observations)
 
         x = self.manager(embedding)
-        manager_dist = Categorical(logits=torch.clamp(x, -50.0, 50.0))
+        manager_dist = Categorical(logits=x)
 
-        x = self.critic(embedding)
+        x = self.critic(embedding_actor)
         value = x.squeeze(1)
 
         extra_predictions = self.extra_heads(embedding)
 
+        # Take the argmax from the manager observation distributions
+        # and try to reconstruct the language observation, returning
+        # it as a loss. Then multiply with the probability of the
+        # language instructions and take the sum
+        # manager_observations_argmax = manager_observation_dists.argmax(dim=-1)
+        # manager_observations_embedding = torch.cat([
+        #     layer(argmax_batch)
+        #     for layer, argmax_batch in zip(
+        #         self.manager_observation_latent_embeddings,
+        #         manager_observations_argmax.permute(1, 0)
+        #     )
+        # ], dim=-1)
+        # lang_reconstruction = self.manager_observations_lang_embedding_reconstr(manager_observations_embedding)
+        # manager_lang_reconstruction_loss = torch.nn.functional.mse_loss(lang_reconstruction, instr_embedding, reduction='none').mean(dim=-1)
+        # manager_observations_log_probs = manager_observation_dists.log_prob(manager_observations_argmax)
+
+        # We take the sum here, which is the same as the total probability
+        # of seeing this reconstruction loss, then exponentiate. Then we can
+        # 
+        # prob_weighted_reconstruction_loss = manager_lang_reconstruction_loss * torch.exp(manager_observations_log_probs.sum(dim=-1)).mean()
+
         return {
             'dist': dist,
             'manager_dist': manager_dist,
-            'manager_observation_probs': manager_observation_probs,
+            # 'manager_observations_dists': manager_observations_dists,
+            # 'manager_reconstruction_loss': prob_weighted_reconstruction_loss,
+            # 'lang_embedding': lang_embedding,
             'value': value,
-            'memory': memory,
+            'memory': actor_memory,
+            'manager_memory': manager_memory,
             'extra_predictions': extra_predictions
         }

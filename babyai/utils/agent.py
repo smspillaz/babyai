@@ -49,6 +49,7 @@ class ModelAgent(Agent):
         self.device = next(self.model.parameters()).device
         self.argmax = argmax
         self.memory = None
+        self.manager_memory = None
         self.countdown = 0
         self.manager_action = None
         self.manager_observation_mask = None
@@ -58,6 +59,8 @@ class ModelAgent(Agent):
         if self.memory is None:
             self.memory = torch.zeros(
                 len(many_obs), self.model.memory_size, device=self.device)
+            self.manager_memory = torch.zeros(
+                len(many_obs), self.model.memory_size, device=self.device)
         elif self.memory.shape[0] != len(many_obs):
             raise ValueError("stick to one batch size for the lifetime of an agent")
         preprocessed_obs = self.obss_preprocessor(many_obs, device=self.device)
@@ -66,14 +69,9 @@ class ModelAgent(Agent):
             model_results = self.model(
                 preprocessed_obs,
                 self.memory,
-                manager_action_latent=(
-                    None if self.manager_action is None
-                    else torch.nn.functional.one_hot(
-                        self.manager_action.to(torch.long),
-                        self.model.action_latent_size
-                    ).to(torch.float)
-                ),
-                manager_observation_latent=self.manager_observation_mask
+                manager_memory=self.manager_memory,
+                manager_action_latent=self.manager_action,
+                #manager_observation_latent=self.manager_observation_mask
             )
             dist = model_results['dist']
             manager_dist = model_results['manager_dist']
@@ -85,7 +83,8 @@ class ModelAgent(Agent):
             self.countdown = numpy.random.choice(numpy.arange(*self.timepoint_bounds))
             if manager_dist is not None:
                 self.manager_action = manager_dist.probs.argmax(1) if self.argmax else manager_dist.sample()
-                self.manager_observation_mask = manager_observation_probs.round().detach()
+                #self.manager_observation_mask = manager_observation_probs.round().detach()
+                self.manager_memory = model_results['manager_memory']
         else:
             self.countdown -= 1
 
