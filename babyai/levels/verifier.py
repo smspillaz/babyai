@@ -280,9 +280,10 @@ class GoToInstr(ActionInstr):
     eg: go to the door
     """
 
-    def __init__(self, obj_desc):
+    def __init__(self, obj_desc, strict=False):
         super().__init__()
         self.desc = obj_desc
+        self.strict = strict
 
     def surface(self, env):
         return 'go to ' + self.desc.surface(env)
@@ -295,10 +296,14 @@ class GoToInstr(ActionInstr):
 
     def verify_action(self, action):
         # For each object position
-        for pos in self.desc.obj_poss:
-            # If the agent is next to (and facing) the object
-            if np.array_equal(pos, self.env.front_pos):
-                return 'success'
+        if action == self.env.actions.done:
+            for pos in self.desc.obj_poss:
+                # If the agent is next to (and facing) the object
+                if np.array_equal(pos, self.env.front_pos):
+                    return 'success'
+
+            if self.strict:
+                return 'failure'
 
         return 'continue'
 
