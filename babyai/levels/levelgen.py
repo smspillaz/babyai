@@ -141,6 +141,10 @@ class RoomGridLevel(RoomGrid):
         elif status is 'failure':
             done = True
             reward = 0
+        elif status is 'continue':
+            if self.step_count > self.max_steps:
+                done = True
+                reward = 0
 
         return obs, reward, done, info
 
