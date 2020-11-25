@@ -124,7 +124,7 @@ class RoomGridLevel(RoomGrid):
 
         if action == self.actions.toggle and isinstance(fwd_cell, Box) and fwd_cell.contains is None:
             self.step_count += 1
-            return self.gen_obs(), 0, False, {}
+            return self.gen_obs(), 0, self.step_count > self.max_steps, {}
 
         obs, reward, done, info = super().step(action)
 
