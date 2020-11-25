@@ -459,7 +459,7 @@ class ACModel(nn.Module, babyai.rl.RecurrentACModel):
     def __init__(self, obs_space, action_space,
                  image_dim=128, memory_dim=128, instr_dim=128,
                  use_instr=False, lang_model="gru", use_memory=False,
-                 arch="bow_endpool_res", aux_info=None):
+                 arch="bow_endpool_res", aux_info=None, **kwargs):
         super().__init__()
     
         self.observation_latent_size = 1
