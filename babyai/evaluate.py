@@ -110,7 +110,7 @@ def batch_evaluate(agent, env_name, seed, episodes, return_obss_actions=False, p
         many_obs = env.reset()
 
         cur_num_frames = 0
-        num_frames = np.zeros((num_envs,), dtype='int64')
+        num_frames = np.ones((num_envs,), dtype='int64') * -1
         returns = np.zeros((num_envs,))
         already_done = np.zeros((num_envs,), dtype='bool')
         if return_obss_actions:
@@ -118,7 +118,7 @@ def batch_evaluate(agent, env_name, seed, episodes, return_obss_actions=False, p
             actions = [[] for _ in range(num_envs)]
             manager_actions = [[] for _ in range(num_envs)]
             manager_observation_masks = [[] for _ in range(num_envs)]
-        while (num_frames == 0).any():
+        while (num_frames == -1).any():
             action = agent.act_batch(many_obs)
             if return_obss_actions:
                 for i in range(num_envs):
