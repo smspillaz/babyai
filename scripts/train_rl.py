@@ -242,8 +242,7 @@ while status['num_frames'] < args.frames:
         for i in order:
             obs = logs["observations_per_episode"][i]
             acts = logs["manager_actions_per_episode"][i]
-            masks = logs["manager_observation_masks_per_episode"][i]
-            print(obs[0]["mission"], acts, masks[0])
+            print(obs[0]["mission"], acts)
         agent.model.train()
         mean_return = np.mean(logs["return_per_episode"])
         success_rate = np.mean([1 if r > 0 else 0 for r in logs['return_per_episode']])
