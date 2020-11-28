@@ -684,6 +684,26 @@ class ManagerObservations(nn.Module):
         return x
 
 
+def rotate_image_batch(images, directions):
+    return torch.stack([
+        torch.rot90(image, k)
+        for image, k in zip(images, directions)
+    ])
+
+
+def make_observation_masks(manager_action_indicator, action_indicator_dim, directions, batch_size, image_height, image_width, device=None):
+    masks = (
+        torch.nn.functional.one_hot(manager_action_indicator, action_indicator_dim).to(torch.float)
+        if manager_action_indicator is not None
+        else torch.zeros(batch_size, action_indicator_dim, device=device, dtype=torch.float)
+    ).reshape(batch_size, image_height, image_width)
+
+    # Rotate counterclockwise back to agent view
+    masks = rotate_image_batch(masks, -1 * directions)
+
+    return masks
+
+
 
 class LanguageConditionedHierarchicalACModel(nn.Module, babyai.rl.RecurrentACModel):
     def __init__(self, obs_space, action_space,
