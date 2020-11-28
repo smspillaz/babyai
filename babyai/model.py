@@ -62,6 +62,7 @@ class ImageBOWEmbedding(nn.Module):
 class ImageEncoder(nn.Module):
     def __init__(self,
                  obs_space,
+                 with_manager_map=False,
                  image_dim=128,
                  arch="bow_endpool_res"):
         super().__init__()
@@ -69,6 +70,7 @@ class ImageEncoder(nn.Module):
         use_bow = 'bow' in arch
         pixel = 'pixel' in arch
         self.res = 'res' in arch
+        self.with_manager_map = with_manager_map
 
         self.arch = arch
 
@@ -81,12 +83,12 @@ class ImageEncoder(nn.Module):
                 raise ValueError("Incorrect architecture name: {}".format(self.arch))
 
         self.image_conv = nn.Sequential(*[
-            *([ImageBOWEmbedding(obs_space['image'], 128)] if use_bow else []),
+            *([ImageBOWEmbedding(obs_space['image'], 4 if with_manager_map else 3, 128)] if use_bow else []),
             *([nn.Conv2d(
-                in_channels=3, out_channels=128, kernel_size=(8, 8),
+                in_channels=4 if with_manager_map else 3, out_channels=128, kernel_size=(8, 8),
                 stride=8, padding=0)] if pixel else []),
             nn.Conv2d(
-                in_channels=128 if use_bow or pixel else 3, out_channels=128,
+                in_channels=128 if use_bow or pixel else (4 if with_manager_map else 3), out_channels=128,
                 kernel_size=(3, 3) if endpool else (2, 2), stride=1, padding=1),
             nn.BatchNorm2d(128),
             nn.ReLU(),
@@ -97,7 +99,10 @@ class ImageEncoder(nn.Module):
             *([] if endpool else [nn.MaxPool2d(kernel_size=(2, 2), stride=2)])
         ])
 
-    def forward(self, x):
+    def forward(self, x, manager_map=None):
+        if self.with_manager_map:
+            torch.cat([x, manager_map.unsqueeze(-1)], dim=-1)
+
         x = torch.transpose(torch.transpose(x, 1, 3), 2, 3)
 
         if 'pixel' in self.arch:
