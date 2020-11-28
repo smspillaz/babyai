@@ -99,7 +99,6 @@ def batch_evaluate(agent, env_name, seed, episodes, return_obss_actions=False, p
         "observations_per_episode": [],
         "actions_per_episode": [],
         "manager_actions_per_episode": [],
-        "manager_observation_masks_per_episode": [],
         "seed_per_episode": []
     }
 
@@ -117,7 +116,6 @@ def batch_evaluate(agent, env_name, seed, episodes, return_obss_actions=False, p
             obss = [[] for _ in range(num_envs)]
             actions = [[] for _ in range(num_envs)]
             manager_actions = [[] for _ in range(num_envs)]
-            manager_observation_masks = [[] for _ in range(num_envs)]
         while (num_frames == -1).any():
             action = agent.act_batch(many_obs)
             if return_obss_actions:
@@ -129,10 +127,6 @@ def batch_evaluate(agent, env_name, seed, episodes, return_obss_actions=False, p
                             manager_actions[i].append(action['manager_action'][i].item())
                         else:
                             manager_actions[i].append(None)
-                        if action['manager_observation_mask'] is not None:
-                            manager_observation_masks[i].append(action['manager_observation_mask'][i].detach())
-                        else:
-                            manager_observation_masks[i].append(None)
             many_obs, reward, done, _ = env.step(action['action'])
             agent.analyze_feedback(reward, done)
             done = np.array(done)
@@ -149,6 +143,5 @@ def batch_evaluate(agent, env_name, seed, episodes, return_obss_actions=False, p
             logs["observations_per_episode"].extend(obss)
             logs["actions_per_episode"].extend(actions)
             logs["manager_actions_per_episode"].extend(manager_actions)
-            logs["manager_observation_masks_per_episode"].extend(manager_observation_masks)
 
     return logs
