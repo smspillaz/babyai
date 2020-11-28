@@ -726,8 +726,14 @@ class LanguageConditionedHierarchicalACModel(nn.Module, babyai.rl.RecurrentACMod
         self.use_memory = use_memory
         self.image_dim = image_dim
 
-        self.image_encoder = ImageEncoder(
+        self.manager_image_encoder = ImageEncoder(
             obs_space,
+            image_dim=image_dim,
+            arch=arch
+        )
+        self.actor_image_encoder = ImageEncoder(
+            obs_space,
+            with_manager_map=True,
             image_dim=image_dim,
             arch=arch
         )
@@ -769,11 +775,12 @@ class LanguageConditionedHierarchicalACModel(nn.Module, babyai.rl.RecurrentACMod
             32,
             arch=arch
         )
+        self.manager_actor_image_conv1 = nn.Conv2d(128, 1, kernel_size=(1, 1))
         self.film_pooling = FiLMPooling(arch=arch)
 
         if self.use_memory:
             self.memory = Memory(
-                image_dim,
+                64,
                 memory_dim=memory_dim
             )
             self.actor_memory = Memory(
@@ -868,11 +875,23 @@ class LanguageConditionedHierarchicalACModel(nn.Module, babyai.rl.RecurrentACMod
         #         )
         #     ], dim=-1)
         # )
-        manager_action_latent = (
-            torch.mean(self.manager_action_latent_embedding.weight, dim=0)
-            if manager_action_latent is None else self.manager_action_latent_embedding(manager_action_latent)
+        manager_action_mask = make_observation_masks(
+            manager_action_latent,
+            self.action_latent_size,
+            obs.direction,
+            obs.image.shape[0],
+            obs.image.shape[1],
+            obs.image.shape[2],
+            device=obs.image.device
         )
-        img_encoding = self.image_encoder(obs.image)
+
+        # Rotate manager input images to face in a front-facing direction
+        forward_facing_images = rotate_image_batch(obs.image, obs.direction)
+        manager_img_encoding = self.manager_image_encoder(forward_facing_images)
+        actor_img_encoding = self.actor_image_encoder(
+            obs.image,
+            manager_action_mask
+        )
 
         # Produce encodings
         if self.use_instr and instr_embedding is None:
@@ -885,28 +904,27 @@ class LanguageConditionedHierarchicalACModel(nn.Module, babyai.rl.RecurrentACMod
                 manager_memory
             )
 
-            attended_img = self.film_image_conditioning(img_encoding, instr_embedding if self.use_instr else None)
+            manager_attended_img = self.film_image_conditioning(manager_img_encoding, instr_embedding if self.use_instr else None)
         else:
-            attended_img = img_encoding
+            manager_attended_img = manager_img_encoding
 
         # Manager generates a heatmap from the image based on what it knows about
         # the problem. Eg, "go to the blue box" should highlight the blue box.
         #manager_map = self.manager_heatmap(img_encoding, manager_observation_latents)
 
         # Now generate the information required for the manager
-        pooled_attended_img = self.film_pooling(attended_img)
+        manager_pooled_attended_img = self.manager_actor_image_conv1(manager_attended_img).reshape(-1, 64)
 
         # UNUSED Inductive bias: The manager map is a form of attention on the original image -
         # before max-pooling, the manager map highlights what we think is going to be
         # important for the actor to be able to do its job.
-        actor_conditioned_image = self.actor_film_image_conditioning(img_encoding, manager_action_latent)
-        actor_pooled_img = self.film_pooling(actor_conditioned_image)
+        actor_pooled_img = self.film_pooling(actor_img_encoding)
 
         if self.use_memory:
-            embedding, manager_memory = self.memory(pooled_attended_img, manager_memory)
+            embedding, manager_memory = self.memory(manager_pooled_attended_img, manager_memory)
             embedding_actor, actor_memory = self.actor_memory(actor_pooled_img, actor_memory)
         else:
-            embedding = pooled_attended_img
+            embedding = manager_pooled_attended_img
             embedding_actor = actor_pooled_img
 
         x = self.actor(embedding_actor)
