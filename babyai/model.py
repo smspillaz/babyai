@@ -46,11 +46,11 @@ class FiLM(nn.Module):
 
 
 class ImageBOWEmbedding(nn.Module):
-   def __init__(self, max_value, embedding_dim):
+   def __init__(self, max_value, n_channels, embedding_dim):
        super().__init__()
        self.max_value = max_value
        self.embedding_dim = embedding_dim
-       self.embedding = nn.Embedding(3 * max_value, embedding_dim)
+       self.embedding = nn.Embedding(n_channels * max_value, embedding_dim)
        self.apply(initialize_parameters)
 
    def forward(self, inputs):
