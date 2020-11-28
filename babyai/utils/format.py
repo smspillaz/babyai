@@ -104,7 +104,8 @@ class ObssPreprocessor:
         self.vocab = self.instr_preproc.vocab
         self.obs_space = {
             "image": 147,
-            "instr": self.vocab.max_size
+            "instr": self.vocab.max_size,
+            "direction": 3
         }
 
     def __call__(self, obss, device=None):
@@ -115,6 +116,11 @@ class ObssPreprocessor:
 
         if "instr" in self.obs_space.keys():
             obs_.instr = self.instr_preproc(obss, device=device)
+
+        if "direction" in self.obs_space.keys():
+            obs_.direction = torch.tensor([
+                o["direction"] for o in obss
+            ], device=device, dtype=torch.long)
 
         return obs_
 
@@ -139,5 +145,10 @@ class IntObssPreprocessor(object):
 
         if "instr" in self.obs_space.keys():
             obs_.instr = self.instr_preproc(obss, device=device)
+
+        if "direction" in self.obs_space.keys():
+            obs_.direction = torch.tensor([
+                o["direction"] for o in obss
+            ], device=device, dtype=torch.long)
 
         return obs_
