@@ -110,7 +110,7 @@ class BaseAlgo(ABC):
         self.mask = torch.ones(shape[1], device=self.device)
         self.masks = torch.zeros(*shape, device=self.device)
         self.actions = torch.zeros(*shape, device=self.device, dtype=torch.int)
-        self.manager_actions = torch.zeros(*shape, device=self.device, dtype=torch.int)
+        self.manager_actions = torch.zeros(*shape, device=self.device, dtype=torch.long)
         #self.manager_observations = torch.zeros(*shape, self.acmodel.n_latent_observations, device=self.device, dtype=torch.float)
         #self.manager_observations_probs = torch.zeros(*shape, self.acmodel.n_latent_observations, device=self.device, dtype=torch.float)
         self.values = torch.zeros(*shape, device=self.device)
@@ -223,7 +223,7 @@ class BaseAlgo(ABC):
             # Update manager
             if timepoints[i] == 1.0:
                 if manager_dist is not None:
-                    curr_manager_action = manager_dist.sample()
+                    curr_manager_action = manager_dist.sample().to(torch.long)
                     self.manager_memory = model_results['memory']
                     #curr_manager_observations = manager_observations_dists.sample()
 
