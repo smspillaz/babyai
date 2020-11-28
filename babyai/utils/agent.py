@@ -75,7 +75,6 @@ class ModelAgent(Agent):
             )
             dist = model_results['dist']
             manager_dist = model_results['manager_dist']
-            manager_observation_probs = model_results['manager_observation_probs']
             value = model_results['value']
             self.memory = model_results['memory']
 
@@ -83,7 +82,6 @@ class ModelAgent(Agent):
             self.countdown = numpy.random.choice(numpy.arange(*self.timepoint_bounds))
             if manager_dist is not None:
                 self.manager_action = manager_dist.probs.argmax(1) if self.argmax else manager_dist.sample()
-                #self.manager_observation_mask = manager_observation_probs.round().detach()
                 self.manager_memory = model_results['manager_memory']
         else:
             self.countdown -= 1
