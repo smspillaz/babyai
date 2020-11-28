@@ -115,11 +115,16 @@ class PPOAlgo(BaseAlgo):
 
                     if manager_dist is not None:
                         manager_ratio = torch.exp(manager_dist.log_prob(sb.manager_action) - sb.manager_log_prob)
-                        manager_surr1 = manager_ratio * sb.advantage * sb.timeline
-                        manager_surr2 = torch.clamp(manager_ratio, 1.0 - self.clip_eps, 1.0 + self.clip_eps) * sb.advantage
-                        manager_policy_loss = -torch.min(manager_surr1, manager_surr2).mean()
+                        manager_surr1 = manager_ratio * sb.advantage
+                        manager_surr2 = torch.clamp(manager_ratio, 1.0 - self.clip_eps, 1.0 + self.clip_eps) * sb.advantage 
+                        timeline_mask_sum = timeline_mask.sum() or 1.0  # Don't divide by zero
+                        manager_policy_loss_all = -torch.min(manager_surr1, manager_surr2).mean()
 
-                        manager_entropy = manager_dist.entropy().mean()
+                        # Note that we multiply by timeline, we assume that the value holds
+                        # for all p steps
+                        manager_policy_loss = (manager_policy_loss_all * timeline_mask).sum() / timeline_mask_sum
+
+                        manager_entropy = (manager_dist.entropy() * timeline_mask).sum() / timeline_mask_sum
 
                         #manager_observation_surr1 = (manager_observation_probs * sb.manager_observation_mask).sum(dim=-1) * sb.advantage * sb.timeline
                         #manager_observation_loss = -manager_observation_surr1.mean()
