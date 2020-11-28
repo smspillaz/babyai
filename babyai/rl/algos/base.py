@@ -199,9 +199,6 @@ class BaseAlgo(ABC):
             self.masks[i] = self.mask
             self.mask = 1 - torch.tensor(done, device=self.device, dtype=torch.float)
             self.actions[i] = action
-            if curr_manager_action is not None:
-                self.manager_actions[i] = curr_manager_action
-                #self.manager_observations[i] = curr_manager_observations
             self.values[i] = value
             if self.reshape_reward is not None:
                 self.rewards[i] = torch.tensor([
@@ -213,19 +210,23 @@ class BaseAlgo(ABC):
 
             self.log_probs[i] = dist.log_prob(action)
 
-            if manager_dist is not None:
-                self.manager_log_probs[i] = manager_dist.log_prob(curr_manager_action)
-                #self.manager_observation_probs[i] = manager_observation_probs
-
             if self.aux_info:
                 self.aux_info_collector.fill_dictionaries(i, env_info, extra_predictions)
 
             # Update manager
-            if timepoints[i] == 1.0:
+            if timepoints[i] > 0.0:
                 if manager_dist is not None:
                     curr_manager_action = manager_dist.sample().to(torch.long)
                     self.manager_memory = model_results['memory']
                     #curr_manager_observations = manager_observations_dists.sample()
+
+            if manager_dist is not None and curr_manager_action is not None:
+                self.manager_log_probs[i] = manager_dist.log_prob(curr_manager_action)
+                #self.manager_observation_probs[i] = manager_observation_probs
+
+            if curr_manager_action is not None:
+                self.manager_actions[i] = curr_manager_action.to(torch.long)
+                #self.manager_observations[i] = curr_manager_observations
 
             # Update log values
 
@@ -248,7 +249,7 @@ class BaseAlgo(ABC):
 
         preprocessed_obs = self.preprocess_obss(self.obs, device=self.device)
         with torch.no_grad():
-            next_value = self.acmodel(preprocessed_obs, self.memory * self.mask.unsqueeze(1))['value']
+            next_value = self.acmodel(preprocessed_obs, self.memory * self.mask.unsqueeze(1), self.manager_memory * self.mask.unsqueeze(1))['value']
 
         for i in reversed(range(self.num_frames_per_proc)):
             next_mask = self.masks[i+1] if i < self.num_frames_per_proc - 1 else self.mask
