@@ -105,6 +105,7 @@ class BaseAlgo(ABC):
         self.memory = torch.zeros(shape[1], self.acmodel.memory_size, device=self.device)
         self.manager_memory = torch.zeros(shape[1], self.acmodel.memory_size, device=self.device)
         self.memories = torch.zeros(*shape, self.acmodel.memory_size, device=self.device)
+        self.manager_memories = torch.zeros(*shape, self.acmodel.memory_size, device=self.device)
 
         self.mask = torch.ones(shape[1], device=self.device)
         self.masks = torch.zeros(*shape, device=self.device)

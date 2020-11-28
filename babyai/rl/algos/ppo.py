@@ -94,6 +94,7 @@ class PPOAlgo(BaseAlgo):
                     model_results = self.acmodel(
                         sb.obs,
                         memory * sb.mask,
+                        manager_memory * sb.mask,
                         #manager_observation_latent=sb.manager_observation_mask,
                         manager_action_latent=sb.manager_action
                     )
@@ -107,7 +108,8 @@ class PPOAlgo(BaseAlgo):
                     # depending on whether or not the timepoint changed?
                     #
                     # XXX: Check this
-                    manager_memory = sb.timeline * model_results['manager_memory'] + (1 - sb.timeline) * manager_memory
+                    timeline_mask = sb.timeline.to(torch.bool).to(torch.float).unsqueeze(-1)
+                    manager_memory = timeline_mask * model_results['manager_memory'] + (1 - timeline_mask) * manager_memory
                     extra_predictions = model_results['extra_predictions']
 
 
