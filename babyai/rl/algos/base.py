@@ -289,7 +289,7 @@ class BaseAlgo(ABC):
         exps.returnn = exps.value + exps.advantage
         exps.log_prob = self.log_probs.transpose(0, 1).reshape(-1)
         exps.manager_log_prob = self.manager_log_probs.transpose(0, 1).reshape(-1)
-        exps.timeline = timepoints.repeat(self.actions.shape[1]).to(exps.action.device)
+        exps.timeline = timepoints.to(exps.action.device)
 
         if self.aux_info:
             exps = self.aux_info_collector.end_collection(exps)
