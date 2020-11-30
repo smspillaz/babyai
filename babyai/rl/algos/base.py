@@ -215,11 +215,13 @@ class BaseAlgo(ABC):
                 self.aux_info_collector.fill_dictionaries(i, env_info, extra_predictions)
 
             # Update manager
-            if timepoints[i] > 0.0:
-                if manager_dist is not None:
-                    curr_manager_action = manager_dist.sample().to(torch.long)
-                    self.manager_memory = model_results['memory']
-                    #curr_manager_observations = manager_observations_dists.sample()
+            curr_manager_action = (timepoints[i] * manager_dist.sample().to(torch.long) + (1 - timepoints[i]) * curr_manager_action) * self.mask
+            self.manager_memory = timepoints[i] * model_results['memory'] + (1 - timepoints[i]) * self.manager_memory
+
+            # If we're done, on the next timepoint we need to update the
+            # manager action, for now set it to zero
+            if i < (self.num_frames_per_proc - 1):
+                timepoints[i + 1] = self.mask
 
             if manager_dist is not None and curr_manager_action is not None:
                 self.manager_log_probs[i] = manager_dist.log_prob(curr_manager_action)
