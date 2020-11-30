@@ -96,7 +96,8 @@ class ModelAgent(Agent):
                 'manager_observation_mask': self.manager_observation_mask,
                 'dist': dist,
                 'manager_dist': manager_dist,
-                'value': value}
+                'value': value,
+                'countdown': self.countdown}
 
     def act(self, obs):
         return self.act_batch([obs])
