@@ -111,6 +111,10 @@ class ModelAgent(Agent):
             self.memory *= (1 - done)
 
 
+    def on_reset(self):
+        self.countdown = 0
+        self.manager_action = None
+
 class RandomAgent:
     """A newly initialized model-based agent."""
 
