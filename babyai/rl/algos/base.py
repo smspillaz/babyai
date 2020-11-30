@@ -9,6 +9,7 @@ from babyai.rl.utils.supervised_losses import ExtraInfoCollector
 
 
 def generate_timepoints_array(num_frames_per_proc,
+                              num_procs,
                               timepoint_lowerbound,
                               timepoint_upperbound):
     array = torch.zeros(num_frames_per_proc)
@@ -24,7 +25,7 @@ def generate_timepoints_array(num_frames_per_proc,
         count -= 1
         i += 1
 
-    return array
+    return array.repeat(num_procs, 1).permute(1, 0)
 
 
 class BaseAlgo(ABC):
@@ -156,8 +157,8 @@ class BaseAlgo(ABC):
         """
         # Generate some timepoints where we would update the
         # manager latents
-        timepoints = generate_timepoints_array(self.num_frames_per_proc, *self.timepoint_bounds)
-        curr_manager_action = None
+        timepoints = generate_timepoints_array(self.num_frames_per_proc, self.num_procs, *self.timepoint_bounds)
+        curr_manager_action = torch.zeros(self.num_procs, dtype=torch.long)
         curr_manager_observations = None
 
         for i in range(self.num_frames_per_proc):
