@@ -88,6 +88,22 @@ def keyDownCb(keyName):
         obs = env.reset()
         print("Mission: {}".format(obs["mission"]))
 
+
+
+def make_override_render(manager_action):
+    def override_render(tile_size, agent_pos, agent_dir, highlight_mask=None):
+        manager_highlight_x = manager_action % 8
+        manager_highlight_y = manager_action // 8
+
+        highlight_mask[:, :] = False
+        highlight_mask[manager_highlight_y, manager_highlight_x] = True
+
+        return orig_render(tile_size, agent_pos, agent_dir, highlight_mask)
+
+    return override_render
+
+orig_render = env.grid.render
+
 step = 0
 episode_num = 0
 while True:
@@ -102,8 +118,9 @@ while True:
         if 'dist' in result and 'value' in result:
             dist, value = result['dist'], result['value']
             dist_str = ", ".join("{:.4f}".format(float(p)) for p in dist.probs[0])
-            print("step: {}, mission: {}, dist: {}, entropy: {:.2f}, value: {:.2f}".format(
-                step, obs["mission"], dist_str, float(dist.entropy()), float(value)))
+            man_act = result["manager_action"].item()
+            print("step: {}, mission: {}, dist: {}, man: {} {} - {} entropy: {:.2f}, value: {:.2f}".format(
+                step, obs["mission"], dist_str, man_act % 8, man_act // 8, result["countdown"], float(dist.entropy()), float(value)))
         else:
             print("step: {}, mission: {}".format(step, obs['mission']))
         if done:
@@ -112,9 +129,12 @@ while True:
             env.seed(args.seed + episode_num)
             obs = env.reset()
             agent.on_reset()
+            orig_render = env.grid.render
             step = 0
         else:
             step += 1
 
-    if renderer.window is None:
-        break
+        env.grid.render = make_override_render(man_act)
+
+    #if renderer.window is None:
+    #    break
