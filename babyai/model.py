@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 from torch.distributions.categorical import Categorical
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
-import babyai.rl
+import babyai.rl.model
 from babyai.rl.utils.supervised_losses import required_heads
 
 
@@ -455,7 +455,7 @@ class ExtraHeads(nn.Module):
         return extra_predictions
 
 
-class ACModel(nn.Module, babyai.rl.RecurrentACModel):
+class ACModel(nn.Module, babyai.rl.model.RecurrentACModel):
     def __init__(self, obs_space, action_space,
                  image_dim=128, memory_dim=128, instr_dim=128,
                  use_instr=False, lang_model="gru", use_memory=False,

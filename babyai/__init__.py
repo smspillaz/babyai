@@ -2,3 +2,4 @@
 # when the babyai package is imported
 from . import levels
 from . import utils
+from . import rl
