@@ -81,7 +81,7 @@ class ImageEncoder(nn.Module):
                 raise ValueError("Incorrect architecture name: {}".format(self.arch))
 
         self.image_conv = nn.Sequential(*[
-            *([ImageBOWEmbedding(obs_space['image'], 128)] if use_bow else []),
+            *([ImageBOWEmbedding(obs_space['image'], 3, 128)] if use_bow else []),
             *([nn.Conv2d(
                 in_channels=3, out_channels=128, kernel_size=(8, 8),
                 stride=8, padding=0)] if pixel else []),
