@@ -536,6 +536,37 @@ class Level_PickupLoc(LevelGen):
             unblocking=False
         )
 
+class Level_GoToAnd11(LevelGen):
+    """
+    Sequencing of go-to-object commands in a small room.
+
+    Competencies: Maze, GoTo, Seq
+    No locked room.
+    No locations.
+    No unblocking.
+    """
+
+    def __init__(
+        self,
+        room_size=8,
+        num_rows=1,
+        num_cols=1,
+        num_dists=8,
+        seed=None
+    ):
+        super().__init__(
+            room_size=room_size,
+            num_rows=num_rows,
+            num_cols=num_cols,
+            num_dists=num_dists,
+            seed=seed,
+            action_kinds=['goto'],
+            instr_kinds=['action', 'and'],
+            locked_room_prob=0,
+            locations=False,
+            unblocking=False
+        )
+
 
 class Level_GoToSeq(LevelGen):
     """
