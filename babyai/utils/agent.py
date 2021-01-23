@@ -58,7 +58,7 @@ class ModelAgent(Agent):
 
     def act_batch(self, many_obs):
         if self.sentence_segments is None:
-            self.sentence_segments = np.zeros(len(many_obs))
+            self.sentence_segments = np.zeros(len(many_obs), dtype=int)
 
         if self.memory is None:
             self.memory = torch.zeros(
