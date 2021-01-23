@@ -77,8 +77,8 @@ class ModelAgent(Agent):
             segments = [[o["mission"]] for o in many_obs]
 
         new_many_obs = [
-            { **o, "mission": segment[self.sentence_segments[i]] }
-            for i, (o, segment) in enumerate(zip(many_obs, self.sentence_segments))
+            { **o, "mission": segments[i][self.sentence_segments[i]] }
+            for i, o in enumerate(many_obs)
         ]
 
         preprocessed_obs = self.obss_preprocessor(new_many_obs, device=self.device)
