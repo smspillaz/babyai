@@ -97,10 +97,10 @@ class ModelAgent(Agent):
         # If an agent picks "done" we must move on to the next instruction
         # in the segmentation
         for i, act in enumerate(action):
-            if act == dist.shape[-1] - 1: # assuming that this is the done action
-                self.sentence_segments[i] = min(self.sentence_segments[i] + 1, len(segements[i]) - 1)
+            if act == dist.logits.shape[-1] - 1: # assuming that this is the done action
+                self.sentence_segments[i] = min(self.sentence_segments[i] + 1, len(segments[i]) - 1)
                 while len(segments[i]) == 1:
-                    self.sentence_segments[i] = min(self.setence_segments[i] + 1, len(segments))
+                    self.sentence_segments[i] = min(self.sentence_segments[i] + 1, len(segments))
                 print('done', i, 'next', self.sentence_segments[i])
 
         return {'action': action,
