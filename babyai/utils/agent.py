@@ -70,7 +70,7 @@ class ModelAgent(Agent):
         # this is the least invasive way of doing it.
         if self.split_model is not None:
             segments = [
-                split_sentence_by_model(self.split_model, self.split_idxs, o["mission"]
+                " ".join(list(utils.split_sentence_by_model(self.split_model, self.split_idxs, o["mission"]))[0])
                 for o in many_obs
             ]
         else:
