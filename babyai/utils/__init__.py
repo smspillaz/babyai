@@ -9,6 +9,7 @@ from babyai.utils.format import ObssPreprocessor, IntObssPreprocessor, get_vocab
 from babyai.utils.log import (
     get_log_path, get_log_dir, synthesize, configure_logging)
 from babyai.utils.model import get_model_dir, load_model, save_model
+from babyai.utils.sentence_segmentation import SentenceMask, load_split_model, split_sentence_by_model
 
 
 def storage_dir():
