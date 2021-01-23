@@ -33,7 +33,7 @@ class Agent(ABC):
 class ModelAgent(Agent):
     """A model-based agent. This agent behaves using a model."""
 
-    def __init__(self, model_or_name, obss_preprocessor, argmax):
+    def __init__(self, model_or_name, obss_preprocessor, argmax, split_model=None):
         if obss_preprocessor is None:
             assert isinstance(model_or_name, str)
             obss_preprocessor = utils.ObssPreprocessor(model_or_name)
