@@ -4,6 +4,7 @@ from .. import utils
 from babyai.bot import Bot
 from babyai.model import ACModel
 from random import Random
+import numpy as np
 
 
 class Agent(ABC):
@@ -47,14 +48,40 @@ class ModelAgent(Agent):
         self.device = next(self.model.parameters()).device
         self.argmax = argmax
         self.memory = None
+        self.sentence_segments = None
+
+        # Load the sentence splitting model
+        if isinstance(split_model, str):
+            self.split_model, self.split_idxs = utils.sentence_segmentation.load_split_model(split_model)
+        else:
+            self.split_model, self.split_idxs = (None, None)
 
     def act_batch(self, many_obs):
+        if self.sentence_segments is None:
+            self.sentence_segments = np.zeros(len(many_obs))
+
         if self.memory is None:
             self.memory = torch.zeros(
                 len(many_obs), self.model.memory_size, device=self.device)
         elif self.memory.shape[0] != len(many_obs):
             raise ValueError("stick to one batch size for the lifetime of an agent")
-        preprocessed_obs = self.obss_preprocessor(many_obs, device=self.device)
+
+        # We are segmenting the sentence every time. Its not ideal, but
+        # this is the least invasive way of doing it.
+        if self.split_model is not None:
+            segments = [
+                split_sentence_by_model(self.split_model, self.split_idxs, o["mission"]
+                for o in many_obs
+            ]
+        else:
+            segments = [[o["mission"]] for o in many_obs]
+
+        new_many_obs = [
+            { **o, "mission": segment[self.sentence_segments[i]] }
+            for i, (o, segment) in enumerate(zip(many_obs, self.sentence_segments))
+        ]
+
+        preprocessed_obs = self.obss_preprocessor(new_many_obs, device=self.device)
 
         with torch.no_grad():
             model_results = self.model(preprocessed_obs, self.memory)
@@ -67,6 +94,15 @@ class ModelAgent(Agent):
         else:
             action = dist.sample()
 
+        # If an agent picks "done" we must move on to the next instruction
+        # in the segmentation
+        for i, act in enumerate(action):
+            if act == dist.shape[-1] - 1: # assuming that this is the done action
+                self.sentence_segments[i] = min(self.sentence_segments[i] + 1, len(segements[i]) - 1)
+                while len(segments[i]) == 1:
+                    self.sentence_segments[i] = min(self.setence_segments[i] + 1, len(segments))
+                print('done', i, 'next', self.sentence_segments[i])
+
         return {'action': action,
                 'dist': dist,
                 'value': value}
@@ -78,7 +114,8 @@ class ModelAgent(Agent):
         if isinstance(done, tuple):
             for i in range(len(done)):
                 if done[i]:
-                    self.memory[i, :] *= 0.
+                    self.memory[i, :] *= 0
+                    self.sentence_segments[i] = 0
         else:
             self.memory *= (1 - done)
 
