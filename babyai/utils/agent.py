@@ -52,7 +52,7 @@ class ModelAgent(Agent):
 
         # Load the sentence splitting model
         if isinstance(split_model, str):
-            self.split_model, self.split_idxs = utils.sentence_segmentation.load_split_model(split_model)
+            self.split_model, self.split_idxs = utils.load_split_model(split_model)
         else:
             self.split_model, self.split_idxs = (None, None)
 
