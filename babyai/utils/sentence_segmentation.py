@@ -2,6 +2,9 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
+def hidden_zeros(seq):
+    return torch.zeros_like(seq[:, 0, ...]).unsqueeze(0)
+
 class SentenceMask(torch.nn.Module):
     def __init__(self, n_words, hid_size):
         super().__init__()
