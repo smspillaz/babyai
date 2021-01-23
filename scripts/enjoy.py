@@ -17,6 +17,8 @@ parser.add_argument("--env", required=True,
                     help="name of the environment to be run (REQUIRED)")
 parser.add_argument("--model", default=None,
                     help="name of the trained model (REQUIRED or --demos-origin or --demos REQUIRED)")
+parser.add_argument("--split-model", default=None,
+                    help="name of the trained sentence splitting module.")
 parser.add_argument("--demos", default=None,
                     help="demos filename (REQUIRED or --model demos-origin required)")
 parser.add_argument("--demos-origin", default=None,
@@ -59,7 +61,7 @@ obs = env.reset()
 print("Mission: {}".format(obs["mission"]))
 
 # Define agent
-agent = utils.load_agent(env, args.model, args.demos, args.demos_origin, args.argmax, args.env)
+agent = utils.load_agent(env, args.model, args.demos, args.demos_origin, args.argmax, args.env, split_model=args.split_model)
 
 # Run the agent
 
