@@ -70,14 +70,14 @@ class ModelAgent(Agent):
         # this is the least invasive way of doing it.
         if self.split_model is not None:
             segments = [
-                " ".join(list(utils.split_sentence_by_model(self.split_model, self.split_idxs, o["mission"]))[0])
+                list(utils.split_sentence_by_model(self.split_model, self.split_idxs, o["mission"]))
                 for o in many_obs
             ]
         else:
-            segments = [[o["mission"]] for o in many_obs]
+            segments = [[o["mission"].split()] for o in many_obs]
 
         new_many_obs = [
-            { **o, "mission": segments[i][self.sentence_segments[i]] }
+            { **o, "mission": " ".join(segments[i][self.sentence_segments[i]]) }
             for i, o in enumerate(many_obs)
         ]
 
