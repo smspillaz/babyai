@@ -99,8 +99,8 @@ class ModelAgent(Agent):
         for i, act in enumerate(action):
             if act == dist.logits.shape[-1] - 1: # assuming that this is the done action
                 self.sentence_segments[i] = min(self.sentence_segments[i] + 1, len(segments[i]) - 1)
-                while len(segments[i]) == 1:
-                    self.sentence_segments[i] = min(self.sentence_segments[i] + 1, len(segments))
+                while len(segments[i][self.sentence_segments[i]]) == 1:
+                    self.sentence_segments[i] = min(self.sentence_segments[i] + 1, len(segments[i]) - 1)
                 print('done', i, 'next', self.sentence_segments[i])
 
         return {'action': action,
