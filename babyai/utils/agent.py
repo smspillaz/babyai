@@ -123,6 +123,9 @@ class ModelAgent(Agent):
         else:
             self.memory *= (1 - done)
 
+            if done is True:
+                self.sentence_segments *= 0
+
 
 class RandomAgent:
     """A newly initialized model-based agent."""
