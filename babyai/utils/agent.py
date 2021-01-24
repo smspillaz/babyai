@@ -81,6 +81,10 @@ class ModelAgent(Agent):
             for i, o in enumerate(many_obs)
         ]
 
+        print([
+            o["mission"] for o in new_many_obs
+        ])
+
         preprocessed_obs = self.obss_preprocessor(new_many_obs, device=self.device)
 
         with torch.no_grad():
